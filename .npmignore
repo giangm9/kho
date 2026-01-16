@@ -1,0 +1,19 @@
+# Source files
+src/
+scripts/
+demos/
+
+# Config files
+tsconfig.json
+.gitignore
+.claude/
+
+# Dev files
+node_modules/
+*.log
+.git/
+
+# Test files
+tests/
+*.test.ts
+*.spec.ts
