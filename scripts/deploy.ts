@@ -34,13 +34,18 @@ async function deploy() {
   console.log('📦 Building bundle...');
   execSync('npm run build', { stdio: 'inherit' });
 
-  // Run tests
-  console.log('\n🧪 Running tests...');
-  try {
-    execSync('npm test', { stdio: 'inherit' });
-  } catch (error) {
-    console.error('❌ Tests failed. Fix tests before deploying.');
-    process.exit(1);
+  // Run tests (if test script exists)
+  const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+  if (packageJson.scripts?.test) {
+    console.log('\n🧪 Running tests...');
+    try {
+      execSync('npm test', { stdio: 'inherit' });
+    } catch (error) {
+      console.error('❌ Tests failed. Fix tests before deploying.');
+      process.exit(1);
+    }
+  } else {
+    console.log('\n⚠️  No test script found, skipping tests...');
   }
 
   // Publish to npm
@@ -54,7 +59,6 @@ async function deploy() {
   }
 
   // Get package version
-  const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
   const version = packageJson.version;
 
   // Create git tag
