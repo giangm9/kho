@@ -20,7 +20,7 @@ import type { Store, System } from './types';
  * dispose();
  */
 export function assembler(systems: System[], store: Store): () => void {
-  const disposers = systems.map(system => system(store).dispose);
+  const disposers = systems.map(system => system(store));
 
   return () => {
     // Dispose in reverse order

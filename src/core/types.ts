@@ -28,6 +28,4 @@ export type Store = {
   _notify<T>(atom: Atom<T>): void;
 };
 
-export type System = (store: Store) => {
-  dispose: () => void;
-};
+export type System = (store: Store) => () => void;

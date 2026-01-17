@@ -261,7 +261,7 @@ function createGameSystem(store: Store) {
     // Game logic using asp.get() and asp.set()
   });
 
-  return { dispose: () => s.dispose() };
+  return () => s.dispose();
 }
 ```
 
