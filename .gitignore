@@ -28,3 +28,9 @@ npm-debug.log*
 # Temporary files
 *.tmp
 .cache/
+
+# Claude Code
+.claude/
+
+# Demos (separate project)
+demos/

@@ -255,12 +255,12 @@ export function useAttributeValue<T>(
   entityId: EntityId
 ): Readonly<Ref<T | undefined>> {
   const store = useStoreInternal();
-  const map = store.get(attr);
-  const value = shallowRef<T | undefined>(map.get(entityId));
+  const initialMap = store.get(attr);
+  const value = shallowRef<T | undefined>(initialMap.get(entityId));
 
   onMounted(() => {
-    const map = store.get(attr);
-    value.value = map.get(entityId);
+    const currentMap = store.get(attr);
+    value.value = currentMap.get(entityId);
 
     const unsubscribe = store.subscribe(attr, (newMap) => {
       const newValue = newMap.get(entityId);

@@ -94,7 +94,7 @@ export function scope(store: Store) {
     }
 
     store._isBatching = true;
-    store._pendingNotifications.clear();
+    store._clearPending();
 
     try {
       fn();

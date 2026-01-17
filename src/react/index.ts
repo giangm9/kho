@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, createContext, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useContext, createContext, useCallback, useRef } from 'react';
 import type { Atom, Store, System } from '../core/types';
 import type { AttributeAtom, EntityId } from '../core/attribute';
 import { createStore } from '../core/store';
@@ -83,11 +83,14 @@ function useStoreInternal(): Store {
 /**
  * React hook to read and write atom values
  * Automatically subscribes to changes and re-renders component
+ * Supports both direct values and updater functions
  *
  * @example
  * const [count, setCount] = useAtom($count);
+ * setCount(5);           // Direct value
+ * setCount(c => c + 1);  // Updater function
  */
-export function useAtom<T>(atom: Atom<T>): [T, (value: T) => void] {
+export function useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => void] {
   const store = useStoreInternal();
   const [value, setValue] = useState<T>(() => store.get(atom));
 
@@ -104,8 +107,14 @@ export function useAtom<T>(atom: Atom<T>): [T, (value: T) => void] {
     return unsubscribe;
   }, [atom, store]);
 
-  const updateValue = useCallback((newValue: T) => {
-    store.set(atom, newValue);
+  const updateValue = useCallback((newValue: T | ((prev: T) => T)) => {
+    if (typeof newValue === 'function') {
+      const updater = newValue as (prev: T) => T;
+      const currentValue = store.get(atom);
+      store.set(atom, updater(currentValue));
+    } else {
+      store.set(atom, newValue);
+    }
   }, [atom, store]);
 
   return [value, updateValue];
@@ -138,16 +147,25 @@ export function useAtomValue<T>(atom: Atom<T>): T {
 
 /**
  * React hook to get setter function only (no re-renders on value change)
+ * Supports both direct values and updater functions
  *
  * @example
  * const setCount = useSetAtom($count);
+ * setCount(5);           // Direct value
+ * setCount(c => c + 1);  // Updater function
  * // Component won't re-render when $count changes
  */
-export function useSetAtom<T>(atom: Atom<T>): (value: T) => void {
+export function useSetAtom<T>(atom: Atom<T>): (value: T | ((prev: T) => T)) => void {
   const store = useStoreInternal();
 
-  return useCallback((newValue: T) => {
-    store.set(atom, newValue);
+  return useCallback((newValue: T | ((prev: T) => T)) => {
+    if (typeof newValue === 'function') {
+      const updater = newValue as (prev: T) => T;
+      const currentValue = store.get(atom);
+      store.set(atom, updater(currentValue));
+    } else {
+      store.set(atom, newValue);
+    }
   }, [atom, store]);
 }
 
