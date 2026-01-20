@@ -22,5 +22,5 @@ export type Scope = {
   dispose(): void;
 }
 
-export type System = (scope: Scope) => () => void;
+export type System = (store: Store) => () => void;
 

@@ -41,7 +41,7 @@ export function provideStore(store: Store, systems?: System[]): void {
   provide(StoreKey, { store, scope: s });
 
   if (systems && systems.length > 0) {
-    const dispose = assembler(systems, s);
+    const dispose = assembler(systems, store);
     onUnmounted(dispose);
   }
 

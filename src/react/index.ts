@@ -47,7 +47,7 @@ export function KhoProvider({ store, systems, children }: KhoProviderProps): Rea
   useEffect(() => {
     if (!systems || systems.length === 0) return;
 
-    const dispose = assembler(systems, scopeRef.current!);
+    const dispose = assembler(systems, store);
 
     return dispose;
   }, [store, systems]);
