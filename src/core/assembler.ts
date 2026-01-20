@@ -1,26 +1,27 @@
 /**
  * Assembler - System Orchestrator
  *
- * Initializes systems with a store and returns dispose function
+ * Initializes systems with a scope and returns dispose function
  */
 
-import type { Store, System } from './types';
+import type { Scope, System } from './types';
 
 /**
- * Assemble multiple systems with a shared store
+ * Assemble multiple systems with a shared scope
  *
  * @example
  * const store = createStore();
+ * const s = scope(store);
  * const dispose = assembler([
  *   createGameSystem,
  *   createPhysicsSystem,
- * ], store);
+ * ], s);
  *
  * // Later, cleanup all systems
  * dispose();
  */
-export function assembler(systems: System[], store: Store): () => void {
-  const disposers = systems.map(system => system(store));
+export function assembler(systems: System[], s: Scope): () => void {
+  const disposers = systems.map(system => system(s));
 
   return () => {
     // Dispose in reverse order

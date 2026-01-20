@@ -3,21 +3,24 @@
  * Vue 3 Composition API integration for Kho state management
  */
 
-import { ref, inject, provide, onMounted, onUnmounted, readonly, shallowRef } from 'vue';
+import { inject, provide, onUnmounted, readonly, shallowRef } from 'vue';
 import type { Ref, InjectionKey } from 'vue';
-import type { Atom, Store, System } from '../core/types';
-import type { AttributeAtom, EntityId } from '../core/attribute';
+import type { Atom, Store, System, Scope } from '../core/types';
+import type { AttributeAtom, EntityId } from '../core/ecs';
 import { createStore } from '../core/store';
 import { scope } from '../core/scope';
 import { assembler } from '../core/assembler';
-
-type Scope = ReturnType<typeof scope>;
 
 // ============================================
 // Store Context (provide/inject Pattern)
 // ============================================
 
-const StoreKey: InjectionKey<Store> = Symbol('kho-store');
+type StoreContextValue = {
+  store: Store;
+  scope: Scope;
+};
+
+const StoreKey: InjectionKey<StoreContextValue> = Symbol('kho-store');
 
 /**
  * Provide a Kho store to the component tree
@@ -34,12 +37,17 @@ const StoreKey: InjectionKey<Store> = Symbol('kho-store');
  * }
  */
 export function provideStore(store: Store, systems?: System[]): void {
-  provide(StoreKey, store);
+  const s = scope(store);
+  provide(StoreKey, { store, scope: s });
 
   if (systems && systems.length > 0) {
-    const dispose = assembler(systems, store);
+    const dispose = assembler(systems, s);
     onUnmounted(dispose);
   }
+
+  onUnmounted(() => {
+    s.dispose();
+  });
 }
 
 // ============================================
@@ -47,28 +55,38 @@ export function provideStore(store: Store, systems?: System[]): void {
 // ============================================
 
 let globalStore: Store | null = null;
+let globalScope: Scope | null = null;
 
 export function setGlobalStore(store: Store): void {
   globalStore = store;
+  globalScope = scope(store);
 }
 
 export function getGlobalStore(): Store {
   if (!globalStore) {
     globalStore = createStore();
+    globalScope = scope(globalStore);
   }
   return globalStore;
 }
 
+function getGlobalScope(): Scope {
+  if (!globalScope) {
+    getGlobalStore(); // This will initialize both
+  }
+  return globalScope!;
+}
+
 // ============================================
-// Internal: Get store from context or global
+// Internal: Get store and scope from context or global
 // ============================================
 
-function useStoreInternal(): Store {
-  const contextStore = inject(StoreKey, null);
-  if (contextStore) {
-    return contextStore;
+function useStoreInternal(): StoreContextValue {
+  const contextValue = inject(StoreKey, null);
+  if (contextValue) {
+    return contextValue;
   }
-  return getGlobalStore();
+  return { store: getGlobalStore(), scope: getGlobalScope() };
 }
 
 // ============================================
@@ -82,7 +100,7 @@ function useStoreInternal(): Store {
  * const store = useStore();
  */
 export function useStore(): Store {
-  return useStoreInternal();
+  return useStoreInternal().store;
 }
 
 /**
@@ -95,23 +113,29 @@ export function useStore(): Store {
  * // setCount(5) updates the atom
  */
 export function useAtom<T>(atom: Atom<T>): [Readonly<Ref<T>>, (value: T) => void] {
-  const store = useStoreInternal();
-  const value = shallowRef<T>(store.get(atom));
+  const { store, scope: s } = useStoreInternal();
+  const value = shallowRef<T>(s.get(atom) as T);
 
-  onMounted(() => {
-    // Sync initial value
-    value.value = store.get(atom);
+  // Create a scope for this subscription
+  const { effect, get, dispose } = scope(store);
 
-    // Subscribe to changes
-    const unsubscribe = store.subscribe(atom, (newValue) => {
-      value.value = newValue;
-    });
+  // Use a flag to skip the initial run since we already have the value
+  let isFirstRun = true;
 
-    onUnmounted(unsubscribe);
+  // Subscribe to atom changes using effect
+  effect([atom], () => {
+    if (isFirstRun) {
+      isFirstRun = false;
+      return;
+    }
+    value.value = get(atom) as T;
   });
 
+  // Cleanup on component unmount
+  onUnmounted(dispose);
+
   const setValue = (newValue: T): void => {
-    store.set(atom, newValue);
+    s.set(atom, newValue);
   };
 
   return [readonly(value) as Readonly<Ref<T>>, setValue];
@@ -125,18 +149,26 @@ export function useAtom<T>(atom: Atom<T>): [Readonly<Ref<T>>, (value: T) => void
  * // count.value is reactive and read-only
  */
 export function useAtomValue<T>(atom: Atom<T>): Readonly<Ref<T>> {
-  const store = useStoreInternal();
-  const value = shallowRef<T>(store.get(atom));
+  const { store, scope: s } = useStoreInternal();
+  const value = shallowRef<T>(s.get(atom) as T);
 
-  onMounted(() => {
-    value.value = store.get(atom);
+  // Create a scope for this subscription
+  const { effect, get, dispose } = scope(store);
 
-    const unsubscribe = store.subscribe(atom, (newValue) => {
-      value.value = newValue;
-    });
+  // Use a flag to skip the initial run since we already have the value
+  let isFirstRun = true;
 
-    onUnmounted(unsubscribe);
+  // Subscribe to atom changes using effect
+  effect([atom], () => {
+    if (isFirstRun) {
+      isFirstRun = false;
+      return;
+    }
+    value.value = get(atom) as T;
   });
+
+  // Cleanup on component unmount
+  onUnmounted(dispose);
 
   return readonly(value) as Readonly<Ref<T>>;
 }
@@ -149,10 +181,10 @@ export function useAtomValue<T>(atom: Atom<T>): Readonly<Ref<T>> {
  * setCount(5);
  */
 export function useSetAtom<T>(atom: Atom<T>): (value: T) => void {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   return (newValue: T): void => {
-    store.set(atom, newValue);
+    s.set(atom, newValue);
   };
 }
 
@@ -162,12 +194,12 @@ export function useSetAtom<T>(atom: Atom<T>): (value: T) => void {
  *
  * @example
  * const s = useScope();
- * s.effect([$count], (count) => {
- *   console.log('Count changed:', count);
+ * s.effect([$count], () => {
+ *   console.log('Count changed:', s.get($count));
  * });
  */
 export function useScope(): Scope {
-  const store = useStoreInternal();
+  const { store } = useStoreInternal();
   const s = scope(store);
 
   onUnmounted(() => {
@@ -183,8 +215,8 @@ export function useScope(): Scope {
  * @example
  * const batch = useBatch();
  * batch(() => {
- *   store.set($count, 10);
- *   store.set($name, 'Alice');
+ *   s.set($count, 10);
+ *   s.set($name, 'Alice');
  * });
  */
 export function useBatch(): (fn: () => void) => void {
@@ -217,26 +249,26 @@ export type UseAttributeResult<T> = [
  * setPosition('player', { x: 10, y: 20 });
  */
 export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   const get = (entityId: EntityId): T | undefined => {
-    const map = store.get(attr);
-    return map.get(entityId);
+    const map = s.get(attr);
+    return map?.get(entityId);
   };
 
   const set = (entityId: EntityId, value: T): void => {
-    const current = store.get(attr);
+    const current = s.get(attr) || new Map();
     const updated = new Map(current);
     updated.set(entityId, value);
-    store.set(attr, updated);
+    s.set(attr, updated);
   };
 
   const remove = (entityId: EntityId): void => {
-    const current = store.get(attr);
-    if (!current.has(entityId)) return;
+    const current = s.get(attr);
+    if (!current?.has(entityId)) return;
     const updated = new Map(current);
     updated.delete(entityId);
-    store.set(attr, updated);
+    s.set(attr, updated);
   };
 
   return [get, set, remove];
@@ -254,34 +286,42 @@ export function useAttributeValue<T>(
   attr: AttributeAtom<T>,
   entityId: EntityId
 ): Readonly<Ref<T | undefined>> {
-  const store = useStoreInternal();
-  const initialMap = store.get(attr);
-  const value = shallowRef<T | undefined>(initialMap.get(entityId));
+  const { store, scope: s } = useStoreInternal();
+  const initialMap = s.get(attr);
+  const value = shallowRef<T | undefined>(initialMap?.get(entityId));
 
-  onMounted(() => {
-    const currentMap = store.get(attr);
-    value.value = currentMap.get(entityId);
+  // Create a scope for this subscription
+  const { effect, get, dispose } = scope(store);
 
-    const unsubscribe = store.subscribe(attr, (newMap) => {
-      const newValue = newMap.get(entityId);
-      // Only update if value changed (shallow comparison)
-      if (value.value !== newValue) {
-        // Deep comparison for objects
-        if (
-          typeof value.value === 'object' &&
-          typeof newValue === 'object' &&
-          value.value !== null &&
-          newValue !== null &&
-          JSON.stringify(value.value) === JSON.stringify(newValue)
-        ) {
-          return;
-        }
-        value.value = newValue;
+  // Use a flag to skip the initial run
+  let isFirstRun = true;
+
+  // Subscribe to attribute changes using effect
+  effect([attr], () => {
+    if (isFirstRun) {
+      isFirstRun = false;
+      return;
+    }
+    const newMap = get(attr);
+    const newValue = newMap?.get(entityId);
+    // Only update if value changed (shallow comparison)
+    if (value.value !== newValue) {
+      // Deep comparison for objects
+      if (
+        typeof value.value === 'object' &&
+        typeof newValue === 'object' &&
+        value.value !== null &&
+        newValue !== null &&
+        JSON.stringify(value.value) === JSON.stringify(newValue)
+      ) {
+        return;
       }
-    });
-
-    onUnmounted(unsubscribe);
+      value.value = newValue;
+    }
   });
+
+  // Cleanup on component unmount
+  onUnmounted(dispose);
 
   return readonly(value) as Readonly<Ref<T | undefined>>;
 }
@@ -296,21 +336,21 @@ export function useAttributeValue<T>(
 export function useSetAttribute<T>(
   attr: AttributeAtom<T>
 ): [(entityId: EntityId, value: T) => void, (entityId: EntityId) => void] {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   const set = (entityId: EntityId, value: T): void => {
-    const current = store.get(attr);
+    const current = s.get(attr) || new Map();
     const updated = new Map(current);
     updated.set(entityId, value);
-    store.set(attr, updated);
+    s.set(attr, updated);
   };
 
   const remove = (entityId: EntityId): void => {
-    const current = store.get(attr);
-    if (!current.has(entityId)) return;
+    const current = s.get(attr);
+    if (!current?.has(entityId)) return;
     const updated = new Map(current);
     updated.delete(entityId);
-    store.set(attr, updated);
+    s.set(attr, updated);
   };
 
   return [set, remove];

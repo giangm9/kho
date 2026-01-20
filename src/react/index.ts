@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useContext, createContext, useCallback, useRef } from 'react';
-import type { Atom, Store, System } from '../core/types';
-import type { AttributeAtom, EntityId } from '../core/attribute';
+import type { Atom, Store, System, Scope } from '../core/types';
+import type { AttributeAtom, EntityId } from '../core/ecs';
 import { createStore } from '../core/store';
 import { scope } from '../core/scope';
 import { assembler } from '../core/assembler';
-
-type Scope = ReturnType<typeof scope>;
 
 // ============================================
 // Store Context (Provider Pattern)
 // ============================================
 
-const StoreContext = createContext<Store | null>(null);
+type StoreContextValue = {
+  store: Store;
+  scope: Scope;
+};
+
+const StoreContext = createContext<StoreContextValue | null>(null);
 
 /**
  * Provider component for Kho store
@@ -35,15 +38,29 @@ export type KhoProviderProps = {
 };
 
 export function KhoProvider({ store, systems, children }: KhoProviderProps): React.ReactElement {
+  // Create a single scope for the provider
+  const scopeRef = useRef<Scope | null>(null);
+  if (!scopeRef.current) {
+    scopeRef.current = scope(store);
+  }
+
   useEffect(() => {
     if (!systems || systems.length === 0) return;
 
-    const dispose = assembler(systems, store);
+    const dispose = assembler(systems, scopeRef.current!);
 
     return dispose;
   }, [store, systems]);
 
-  return React.createElement(StoreContext.Provider, { value: store }, children);
+  useEffect(() => {
+    return () => {
+      scopeRef.current?.dispose();
+    };
+  }, []);
+
+  const contextValue = { store, scope: scopeRef.current };
+
+  return React.createElement(StoreContext.Provider, { value: contextValue }, children);
 }
 
 // ============================================
@@ -51,29 +68,39 @@ export function KhoProvider({ store, systems, children }: KhoProviderProps): Rea
 // ============================================
 
 let globalStore: Store | null = null;
+let globalScope: Scope | null = null;
 
 export function setGlobalStore(store: Store) {
   globalStore = store;
+  globalScope = scope(store);
 }
 
 export function getGlobalStore(): Store {
   if (!globalStore) {
     globalStore = createStore();
+    globalScope = scope(globalStore);
   }
   return globalStore;
 }
 
+function getGlobalScope(): Scope {
+  if (!globalScope) {
+    getGlobalStore(); // This will initialize both
+  }
+  return globalScope!;
+}
+
 // ============================================
-// Internal: Get store from context or global
+// Internal: Get store and scope from context or global
 // ============================================
 
-function useStoreInternal(): Store {
-  const contextStore = useContext(StoreContext);
-  if (contextStore) {
-    return contextStore;
+function useStoreInternal(): StoreContextValue {
+  const contextValue = useContext(StoreContext);
+  if (contextValue) {
+    return contextValue;
   }
   // Fallback to global store for backwards compatibility
-  return getGlobalStore();
+  return { store: getGlobalStore(), scope: getGlobalScope() };
 }
 
 // ============================================
@@ -91,31 +118,41 @@ function useStoreInternal(): Store {
  * setCount(c => c + 1);  // Updater function
  */
 export function useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => void] {
-  const store = useStoreInternal();
-  const [value, setValue] = useState<T>(() => store.get(atom));
+  const { store, scope: s } = useStoreInternal();
+  const [value, setValue] = useState<T>(() => s.get(atom) as T);
 
   useEffect(() => {
     // Sync state if atom value changed externally
-    setValue(store.get(atom));
+    setValue(s.get(atom) as T);
 
-    // Subscribe to atom changes
-    const unsubscribe = store.subscribe(atom, (newValue) => {
-      setValue(newValue);
+    // Create a scope for this subscription
+    const { effect, get, dispose } = scope(store);
+
+    // Use a flag to skip the initial run since we already have the value
+    let isFirstRun = true;
+
+    // Subscribe to atom changes using effect
+    effect([atom], () => {
+      if (isFirstRun) {
+        isFirstRun = false;
+        return;
+      }
+      setValue(get(atom) as T);
     });
 
     // Cleanup subscription on unmount
-    return unsubscribe;
+    return dispose;
   }, [atom, store]);
 
   const updateValue = useCallback((newValue: T | ((prev: T) => T)) => {
     if (typeof newValue === 'function') {
       const updater = newValue as (prev: T) => T;
-      const currentValue = store.get(atom);
-      store.set(atom, updater(currentValue));
+      const currentValue = s.get(atom) as T;
+      s.set(atom, updater(currentValue));
     } else {
-      store.set(atom, newValue);
+      s.set(atom, newValue);
     }
-  }, [atom, store]);
+  }, [atom, s]);
 
   return [value, updateValue];
 }
@@ -127,19 +164,29 @@ export function useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => 
  * const count = useAtomValue($count);
  */
 export function useAtomValue<T>(atom: Atom<T>): T {
-  const store = useStoreInternal();
-  const [value, setValue] = useState<T>(() => store.get(atom));
+  const { store, scope: s } = useStoreInternal();
+  const [value, setValue] = useState<T>(() => s.get(atom) as T);
 
   useEffect(() => {
     // Sync state if atom value changed externally
-    setValue(store.get(atom));
+    setValue(s.get(atom) as T);
 
-    // Subscribe to atom changes
-    const unsubscribe = store.subscribe(atom, (newValue) => {
-      setValue(newValue);
+    // Create a scope for this subscription
+    const { effect, get, dispose } = scope(store);
+
+    // Use a flag to skip the initial run since we already have the value
+    let isFirstRun = true;
+
+    // Subscribe to atom changes using effect
+    effect([atom], () => {
+      if (isFirstRun) {
+        isFirstRun = false;
+        return;
+      }
+      setValue(get(atom) as T);
     });
 
-    return unsubscribe;
+    return dispose;
   }, [atom, store]);
 
   return value;
@@ -156,17 +203,17 @@ export function useAtomValue<T>(atom: Atom<T>): T {
  * // Component won't re-render when $count changes
  */
 export function useSetAtom<T>(atom: Atom<T>): (value: T | ((prev: T) => T)) => void {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   return useCallback((newValue: T | ((prev: T) => T)) => {
     if (typeof newValue === 'function') {
       const updater = newValue as (prev: T) => T;
-      const currentValue = store.get(atom);
-      store.set(atom, updater(currentValue));
+      const currentValue = s.get(atom) as T;
+      s.set(atom, updater(currentValue));
     } else {
-      store.set(atom, newValue);
+      s.set(atom, newValue);
     }
-  }, [atom, store]);
+  }, [atom, s]);
 }
 
 /**
@@ -177,7 +224,7 @@ export function useSetAtom<T>(atom: Atom<T>): (value: T | ((prev: T) => T)) => v
  * const store = useStore();
  */
 export function useStore(): Store {
-  return useStoreInternal();
+  return useStoreInternal().store;
 }
 
 /**
@@ -187,12 +234,12 @@ export function useStore(): Store {
  * @example
  * const s = useScope();
  * s.batch(() => {
- *   store.set($count, 10);
- *   store.set($name, 'Alice');
+ *   s.set($count, 10);
+ *   s.set($name, 'Alice');
  * });
  */
 export function useScope(): Scope {
-  const store = useStoreInternal();
+  const { store } = useStoreInternal();
   const scopeRef = useRef<Scope | null>(null);
 
   if (!scopeRef.current) {
@@ -216,8 +263,8 @@ export function useScope(): Scope {
  * @example
  * const batch = useBatch();
  * batch(() => {
- *   store.set($count, 10);
- *   store.set($name, 'Alice');
+ *   s.set($count, 10);
+ *   s.set($name, 'Alice');
  * }); // Effects run once at the end
  */
 export function useBatch(): (fn: () => void) => void {
@@ -267,30 +314,30 @@ export type UseAttributeResult<T> = [
  * }
  */
 export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   // Stable getter - reads directly from store (always fresh value)
   const get = useCallback((entityId: EntityId): T | undefined => {
-    const map = store.get(attr);
-    return map.get(entityId);
-  }, [attr, store]);
+    const map = s.get(attr);
+    return map?.get(entityId);
+  }, [attr, s]);
 
   // Stable setter
   const set = useCallback((entityId: EntityId, value: T): void => {
-    const current = store.get(attr);
+    const current = s.get(attr) || new Map();
     const updated = new Map(current);
     updated.set(entityId, value);
-    store.set(attr, updated);
-  }, [attr, store]);
+    s.set(attr, updated);
+  }, [attr, s]);
 
   // Stable remover
   const remove = useCallback((entityId: EntityId): void => {
-    const current = store.get(attr);
-    if (!current.has(entityId)) return;
+    const current = s.get(attr);
+    if (!current?.has(entityId)) return;
     const updated = new Map(current);
     updated.delete(entityId);
-    store.set(attr, updated);
-  }, [attr, store]);
+    s.set(attr, updated);
+  }, [attr, s]);
 
   return [get, set, remove];
 }
@@ -309,20 +356,31 @@ export function useAttributeValue<T>(
   attr: AttributeAtom<T>,
   entityId: EntityId
 ): T | undefined {
-  const store = useStoreInternal();
+  const { store, scope: s } = useStoreInternal();
   const [value, setValue] = useState<T | undefined>(() => {
-    const map = store.get(attr);
-    return map.get(entityId);
+    const map = s.get(attr);
+    return map?.get(entityId);
   });
 
   useEffect(() => {
     // Get initial value
-    const map = store.get(attr);
-    setValue(map.get(entityId));
+    const map = s.get(attr);
+    setValue(map?.get(entityId));
 
-    // Subscribe to attribute changes, but only update if this entity changed
-    const unsubscribe = store.subscribe(attr, (newMap) => {
-      const newValue = newMap.get(entityId);
+    // Create a scope for this subscription
+    const { effect, get, dispose } = scope(store);
+
+    // Use a flag to skip the initial run
+    let isFirstRun = true;
+
+    // Subscribe to attribute changes using effect
+    effect([attr], () => {
+      if (isFirstRun) {
+        isFirstRun = false;
+        return;
+      }
+      const newMap = get(attr);
+      const newValue = newMap?.get(entityId);
       setValue((prev) => {
         // Only trigger re-render if value actually changed
         if (prev === newValue) return prev;
@@ -340,7 +398,7 @@ export function useAttributeValue<T>(
       });
     });
 
-    return unsubscribe;
+    return dispose;
   }, [attr, entityId, store]);
 
   return value;
@@ -358,22 +416,22 @@ export function useAttributeValue<T>(
 export function useSetAttribute<T>(
   attr: AttributeAtom<T>
 ): [(entityId: EntityId, value: T) => void, (entityId: EntityId) => void] {
-  const store = useStoreInternal();
+  const { scope: s } = useStoreInternal();
 
   const set = useCallback((entityId: EntityId, value: T): void => {
-    const current = store.get(attr);
+    const current = s.get(attr) || new Map();
     const updated = new Map(current);
     updated.set(entityId, value);
-    store.set(attr, updated);
-  }, [attr, store]);
+    s.set(attr, updated);
+  }, [attr, s]);
 
   const remove = useCallback((entityId: EntityId): void => {
-    const current = store.get(attr);
-    if (!current.has(entityId)) return;
+    const current = s.get(attr);
+    if (!current?.has(entityId)) return;
     const updated = new Map(current);
     updated.delete(entityId);
-    store.set(attr, updated);
-  }, [attr, store]);
+    s.set(attr, updated);
+  }, [attr, s]);
 
   return [set, remove];
 }

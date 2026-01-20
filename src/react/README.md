@@ -15,10 +15,10 @@ npm install kho react
 Wrap your app with `KhoProvider`:
 
 ```tsx
-import { Store } from 'kho';
+import { createStore } from 'kho';
 import { KhoProvider } from 'kho/react';
 
-const store = new Store();
+const store = createStore();
 
 function App() {
   return (
@@ -31,7 +31,7 @@ function App() {
 
 ### 2. Use Hooks in Components
 
-#### `useAtom()` - Read atom value
+#### `useAtom()` - Read and write atom value
 
 ```tsx
 import { atom } from 'kho';
@@ -40,42 +40,41 @@ import { useAtom } from 'kho/react';
 const $count = atom(0);
 
 function Counter() {
-  const count = useAtom($count);
-  return <p>Count: {count}</p>;
-}
-```
-
-#### `useSetAtom()` - Get setter function
-
-```tsx
-import { useSetAtom } from 'kho/react';
-
-function Counter() {
-  const setCount = useSetAtom($count);
-
-  return (
-    <button onClick={() => setCount(5)}>
-      Set to 5
-    </button>
-  );
-}
-```
-
-#### `useAtomValue()` - Get both value and setter
-
-```tsx
-import { useAtomValue } from 'kho/react';
-
-function Counter() {
-  const [count, setCount] = useAtomValue($count);
+  const [count, setCount] = useAtom($count);
 
   return (
     <div>
       <p>Count: {count}</p>
-      <button onClick={() => setCount(count + 1)}>
-        Increment
-      </button>
+      <button onClick={() => setCount(count + 1)}>+</button>
+      <button onClick={() => setCount(c => c - 1)}>-</button>
     </div>
+  );
+}
+```
+
+#### `useAtomValue()` - Read atom value (read-only)
+
+```tsx
+import { useAtomValue } from 'kho/react';
+
+function Display() {
+  const count = useAtomValue($count);
+  return <p>Count: {count}</p>;
+}
+```
+
+#### `useSetAtom()` - Get setter function only
+
+```tsx
+import { useSetAtom } from 'kho/react';
+
+function IncrementButton() {
+  const setCount = useSetAtom($count);
+
+  return (
+    <button onClick={() => setCount(c => c + 1)}>
+      Increment
+    </button>
   );
 }
 ```
@@ -100,42 +99,59 @@ function Debug() {
 
 ```tsx
 import { useEffect } from 'react';
-import { useScope } from 'kho/react';
+import { useScope, useStore } from 'kho/react';
 
 function EffectExample() {
-  const scope = useScope();
+  const s = useScope();
+  const store = useStore();
 
   useEffect(() => {
-    // Register effects
-    scope.effect([$count], (count) => {
-      console.log('Count changed:', count);
+    // Register effects - they will be cleaned up on unmount
+    s.effect([$count], () => {
+      console.log('Count changed:', store.get($count));
     });
-
-    // Cleanup
-    return () => scope.dispose();
-  }, [scope]);
+  }, [s, store]);
 
   return <div>Check console for updates</div>;
+}
+```
+
+#### `useBatch()` - Batch multiple updates
+
+```tsx
+import { useBatch, useStore } from 'kho/react';
+
+function BatchExample() {
+  const batch = useBatch();
+  const store = useStore();
+
+  const handleReset = () => {
+    batch(() => {
+      store.set($count, 0);
+      store.set($name, 'Anonymous');
+    }); // Effects run once at the end
+  };
+
+  return <button onClick={handleReset}>Reset All</button>;
 }
 ```
 
 ## Complete Example
 
 ```tsx
-import { atom, Store } from 'kho';
-import { KhoProvider, useAtom, useSetAtom } from 'kho/react';
+import { atom, createStore } from 'kho';
+import { KhoProvider, useAtom, useAtomValue, useSetAtom } from 'kho/react';
 
 // Define atoms
 const $count = atom(0);
 const $name = atom('Alice');
 
 // Create store
-const store = new Store();
+const store = createStore();
 
 // Counter component
 function Counter() {
-  const count = useAtom($count);
-  const setCount = useSetAtom($count);
+  const [count, setCount] = useAtom($count);
 
   return (
     <div>
@@ -149,7 +165,7 @@ function Counter() {
 
 // Name component
 function NameInput() {
-  const name = useAtom($name);
+  const name = useAtomValue($name);
   const setName = useSetAtom($name);
 
   return (
@@ -184,6 +200,7 @@ Provides Kho store to the component tree.
 
 **Props:**
 - `store: Store` - The Kho store instance
+- `systems?: System[]` - Optional array of systems to initialize
 - `children: ReactNode` - Child components
 
 ### Hooks
@@ -192,41 +209,52 @@ Provides Kho store to the component tree.
 
 Returns the Kho store from context.
 
-#### `useAtom<T>(atom: Atom<T>): T`
+#### `useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => void]`
 
-Subscribes to an atom and returns its current value.
+Returns the atom's value and a setter function (like `useState`). Supports both direct values and updater functions.
 
-#### `useSetAtom<T>(atom: Atom<T>): (value: T) => void`
+#### `useAtomValue<T>(atom: Atom<T>): T`
 
-Returns a function to update an atom's value.
+Subscribes to an atom and returns its current value. Component re-renders when value changes.
 
-#### `useAtomValue<T>(atom: Atom<T>): [T, (value: T) => void]`
+#### `useSetAtom<T>(atom: Atom<T>): (value: T | ((prev: T) => T)) => void`
 
-Returns both the atom's value and setter function (like `useState`).
+Returns a function to update an atom's value. Component does NOT re-render when value changes.
 
 #### `useScope(): Scope`
 
-Creates a scope with lifecycle tied to the component. Automatically disposes when component unmounts.
+Creates a scope with lifecycle tied to the component. Automatically disposes when component unmounts. Use this to register effects that should live with the component.
+
+#### `useBatch(): (fn: () => void) => void`
+
+Returns a function that batches multiple store updates. Effects only run once after all updates complete.
+
+## How It Works
+
+The React bindings use `scope(store).effect()` internally to subscribe to atom changes. When an atom changes, the effect callback runs and triggers a React state update, causing the component to re-render.
+
+Each hook creates its own scope and properly disposes it when the component unmounts, preventing memory leaks.
 
 ## Notes
 
 - **Automatic Subscriptions**: Components automatically re-render when atoms change
-- **Cleanup**: Scopes created with `useScope()` are automatically disposed on unmount
+- **Cleanup**: Subscriptions are automatically cleaned up on unmount
 - **Type Safety**: All hooks are fully typed with TypeScript
-- **Zero Dependencies**: Core library has zero runtime dependencies (React is a peer dependency)
+- **Updater Functions**: `useAtom` and `useSetAtom` support updater functions like `setCount(c => c + 1)`
 
 ## TypeScript
 
 All hooks and components are fully typed:
 
 ```tsx
-import { Atom } from 'kho';
+import { Atom, atom } from 'kho';
 import { useAtom } from 'kho/react';
 
 const $count: Atom<number> = atom(0);
 
 function Counter() {
-  const count: number = useAtom($count); // Type inferred
-  // ...
+  const [count, setCount] = useAtom($count); // Types inferred
+  // count: number
+  // setCount: (value: number | ((prev: number) => number)) => void
 }
 ```

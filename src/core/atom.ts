@@ -1,18 +1,20 @@
-/**
- * Atom implementation
- */
+import { Atom, Store } from './types'
 
-import type { Atom } from './types';
+type InstanceEntry<T> = {
+  value: T;
+  listeners: Set<() => void>;
+}
 
-/**
- * Create an atom with initial value
- *
- * @example
- * const $count = atom(0);
- * const $name = atom('Alice');
- */
-export function atom<T>(initialValue: T): Atom<T> {
+export function atomWithFactory<T>(initialFactory: () => T): Atom<T> {
+  const instances = new WeakMap<Store, InstanceEntry<T>>();
+
   return {
-    _initialValue: initialValue,
+    initialFactory,
+    instances,
   };
 }
+
+export function atom<T>(initialValue: T) {
+  return atomWithFactory(() => initialValue);
+}
+
