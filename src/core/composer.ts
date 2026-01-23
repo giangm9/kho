@@ -35,9 +35,10 @@ export type SystemEntry = {
  * });
  * set($systems, systems);
  *
- * // Disable a system
+ * // Disable a system (create new entry object, don't mutate)
  * const systems = new Map(get($systems)!);
- * systems.get('physics')!.enabled = false;
+ * const entry = systems.get('physics')!;
+ * systems.set('physics', { ...entry, enabled: false });
  * set($systems, systems);
  */
 export const $systems: Atom<Map<string, SystemEntry>> = atom(new Map());
@@ -60,9 +61,10 @@ export const $systems: Atom<Map<string, SystemEntry>> = atom(new Map());
  *   ['debug', { name: 'debug', factory: debugSystem, dispose: null, enabled: false }],
  * ]));
  *
- * // Enable/disable dynamically
+ * // Enable/disable dynamically (create new entry, don't mutate)
  * const systems = new Map(get($systems)!);
- * systems.get('debug')!.enabled = true;
+ * const entry = systems.get('debug')!;
+ * systems.set('debug', { ...entry, enabled: true });
  * set($systems, systems);
  *
  * // Cleanup
