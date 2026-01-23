@@ -20,7 +20,19 @@ export type Scope = {
   batch(callback: () => void): void;
   emit(): void;
   dispose(): void;
+
+
 }
 
 export type System = (store: Store) => () => void;
 
+export type Signal<T> = {
+  readonly _brand: 'signal';
+  readonly handlers: WeakMap<Store, Set<(value: T) => void>>;
+};
+
+export type Listener = {
+  on<T>(signal: Signal<T>, handler: (value: T) => void): () => void;
+  emit<T>(signal: Signal<T>, value: T): void;
+  dispose(): void;
+};

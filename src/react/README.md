@@ -82,13 +82,15 @@ function IncrementButton() {
 #### `useStore()` - Access store directly
 
 ```tsx
+import { scope } from 'kho';
 import { useStore } from 'kho/react';
 
 function Debug() {
   const store = useStore();
+  const { get } = scope(store);
 
   const handleLog = () => {
-    console.log('Count:', store.get($count));
+    console.log('Count:', get($count));
   };
 
   return <button onClick={handleLog}>Log Count</button>;
@@ -99,18 +101,17 @@ function Debug() {
 
 ```tsx
 import { useEffect } from 'react';
-import { useScope, useStore } from 'kho/react';
+import { useScope } from 'kho/react';
 
 function EffectExample() {
   const s = useScope();
-  const store = useStore();
 
   useEffect(() => {
     // Register effects - they will be cleaned up on unmount
     s.effect([$count], () => {
-      console.log('Count changed:', store.get($count));
+      console.log('Count changed:', s.get($count));
     });
-  }, [s, store]);
+  }, [s]);
 
   return <div>Check console for updates</div>;
 }
@@ -119,16 +120,16 @@ function EffectExample() {
 #### `useBatch()` - Batch multiple updates
 
 ```tsx
-import { useBatch, useStore } from 'kho/react';
+import { useBatch, useScope } from 'kho/react';
 
 function BatchExample() {
   const batch = useBatch();
-  const store = useStore();
+  const s = useScope();
 
   const handleReset = () => {
     batch(() => {
-      store.set($count, 0);
-      store.set($name, 'Anonymous');
+      s.set($count, 0);
+      s.set($name, 'Anonymous');
     }); // Effects run once at the end
   };
 

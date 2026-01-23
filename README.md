@@ -35,15 +35,15 @@ const $doubled = atom(0);
 const store = createStore();
 
 // Create reactive effects
-const { effect, dispose } = scope(store);
+const { effect, get, set, dispose } = scope(store);
 
 effect([$count], () => {
-  const count = store.get($count)!;
-  store.set($doubled, count * 2);
+  const count = get($count)!;
+  set($doubled, count * 2);
 });
 
 // Update state
-store.set($count, 5);
+set($count, 5);
 // $doubled automatically becomes 10
 
 // Cleanup when done
@@ -93,10 +93,6 @@ type Atom<T> = {
 // Store - central state container
 type Store = {
   name: string;
-  pendingBatch: Set<() => void> | null;
-  get<T>(atom: Atom<T>): T | undefined;
-  set<T>(atom: Atom<T>, value: T): void;
-  notify(atom: Atom<any>): void;
 }
 
 // System - organized business logic
@@ -118,18 +114,15 @@ atomWithFactory<T>(factory: () => T): Atom<T>
 ```typescript
 // Create a new store
 createStore(name?: string): Store
-
-// Store methods:
-store.get(atom)     // Get current value (or undefined)
-store.set(atom, value)  // Set value and notify listeners
-store.notify(atom)  // Trigger listeners (respects pendingBatch)
-store.pendingBatch  // null (immediate) or Set (batching mode)
 ```
 
 ### scope.ts
 
 ```typescript
 const {
+  get,        // (atom) - get current value (or undefined)
+  set,        // (atom, value) - set value and notify listeners
+  notify,     // (atom) - trigger listeners manually
   effect,     // (atoms[], callback) - reactive effect
   debounce,   // (atoms[], ms, callback) - debounced effect
   throttle,   // (atoms[], ms, callback) - throttled effect
@@ -142,33 +135,49 @@ const {
 } = scope(store);
 ```
 
-### ecs.ts (Entity-Component-System)
+### entity.ts (Entity-Component-System)
 
 ```typescript
 // Types
-type Entity = { id: number }
-type World = Atom<Map<number, Entity>>
-type Attribute<V> = Atom<WeakMap<Entity, V>>
+type EntityId = string;
+type Entity = { readonly id: EntityId };
+type Attribute<T> = Atom<WeakMap<Entity, T>>;
 
-// Create world (entity registry)
-world(): World
+// Create attribute (data column for entities)
+attribute<T>(): Attribute<T>
 
-// Create attribute (per-entity data)
-attribute<V>(): Attribute<V>
-
-// Create aspect (view into entity attributes)
-aspect(store, world, id): {
-  get<V>(attr): V | undefined,
-  set<V>(attr, value): void,
-  apply<V>(commands: [Attribute<V>, V][]): void
-}
+// Create world accessor for entity operations
+const {
+  entity,   // (id) - get/create cached entity object
+  add,      // (entity) - add entity to world
+  remove,   // (entity) - remove entity from world
+  has,      // (entity) - check if entity exists
+  all,      // () - get all entities
+  get,      // (entity, attr) - get attribute value
+  set,      // (entity, attr, value) - set attribute value
+  delete,   // (entity, attr) - delete attribute
+  hasAttr,  // (entity, attr) - check if entity has attribute
+  with,     // (...attrs) - entities with all attributes
+  without,  // (...attrs) - entities without attributes
+} = world(store);
 ```
 
-### assembler.ts
+### composer.ts
 
 ```typescript
-// Combine multiple systems with shared store
-assembler(systems: System[], store: Store): () => void
+// System entry type
+type SystemEntry = {
+  name: string;
+  factory: System;
+  dispose: (() => void) | null;
+  enabled: boolean;
+}
+
+// Atom containing all registered systems
+$systems: Atom<Map<string, SystemEntry>>
+
+// Composer system - reacts to $systems changes
+composer(store: Store): () => void
 ```
 
 ## System Pattern
@@ -185,12 +194,12 @@ export const $doubled = atom(0);
 
 // System function returns dispose
 export function counterSystem(store: Store) {
-  const { effect, dispose } = scope(store);
+  const { effect, get, set, dispose } = scope(store);
 
   // All logic in effects - no public methods
   effect([$count], () => {
-    const count = store.get($count)!;
-    store.set($doubled, count * 2);
+    const count = get($count)!;
+    set($doubled, count * 2);
   });
 
   return dispose;
@@ -198,10 +207,11 @@ export function counterSystem(store: Store) {
 
 // Usage
 const store = createStore();
+const { get, set } = scope(store);
 const dispose = counterSystem(store);
 
-store.set($count, 5);
-console.log(store.get($doubled)); // 10
+set($count, 5);
+console.log(get($doubled)); // 10
 
 dispose(); // Cleanup
 ```
@@ -209,40 +219,38 @@ dispose(); // Cleanup
 ## ECS Example
 
 ```typescript
-import { world, attribute, aspect, createStore, scope } from 'kho';
+import { attribute, world, createStore, scope } from 'kho';
 import type { Store } from 'kho';
 
-// Create world and attributes
-const $world = world();
+// Create attributes (data columns)
 const $position = attribute<{ x: number; y: number }>();
 const $velocity = attribute<{ vx: number; vy: number }>();
 
 function gameSystem(store: Store) {
-  const { effect, interval, dispose } = scope(store);
+  const { interval, dispose } = scope(store);
+  const { entity, add, get, set, with: withAttrs } = world(store);
 
-  // Initialize world with entities
-  const worldMap = store.get($world)!;
-  worldMap.set(1, { id: 1 });
-  worldMap.set(2, { id: 2 });
-  store.notify($world);
+  // Create and add entities
+  const player = entity('player');
+  const enemy = entity('enemy');
 
-  // Set initial positions
-  const player = aspect(store, $world, 1);
-  player.set($position, { x: 0, y: 0 });
-  player.set($velocity, { vx: 1, vy: 0 });
+  add(player);
+  set(player, $position, { x: 0, y: 0 });
+  set(player, $velocity, { vx: 1, vy: 0 });
 
-  // Game loop - update positions
+  add(enemy);
+  set(enemy, $position, { x: 100, y: 100 });
+  set(enemy, $velocity, { vx: -1, vy: 1 });
+
+  // Game loop - update positions for entities with both attributes
   interval(16, () => {
-    for (const [id] of store.get($world)!) {
-      const asp = aspect(store, $world, id);
-      const pos = asp.get($position);
-      const vel = asp.get($velocity);
-      if (pos && vel) {
-        asp.set($position, {
-          x: pos.x + vel.vx,
-          y: pos.y + vel.vy,
-        });
-      }
+    for (const e of withAttrs($position, $velocity)) {
+      const pos = get(e, $position)!;
+      const vel = get(e, $velocity)!;
+      set(e, $position, {
+        x: pos.x + vel.vx,
+        y: pos.y + vel.vy,
+      });
     }
   });
 
@@ -255,40 +263,53 @@ function gameSystem(store: Store) {
 Use `batch()` to group multiple updates into a single notification cycle:
 
 ```typescript
-const { batch, effect, dispose } = scope(store);
+const { batch, set, effect, dispose } = scope(store);
 
 effect([$a, $b, $c], () => {
   console.log('Effect triggered');
 });
 
 // Without batch: 3 effect triggers
-store.set($a, 1);
-store.set($b, 2);
-store.set($c, 3);
+set($a, 1);
+set($b, 2);
+set($c, 3);
 
 // With batch: 1 effect trigger
 batch(() => {
-  store.set($a, 1);
-  store.set($b, 2);
-  store.set($c, 3);
+  set($a, 1);
+  set($b, 2);
+  set($c, 3);
 });
 ```
 
-## Assembling Multiple Systems
+## Composing Multiple Systems
+
+Composer uses data-driven approach - systems are managed through an atom:
 
 ```typescript
-import { createStore, assembler } from 'kho';
+import { createStore, scope, composer, $systems } from 'kho';
+import type { SystemEntry } from 'kho';
 
 const store = createStore('app');
+const { set, get } = scope(store);
 
-const dispose = assembler([
-  inputSystem,
-  physicsSystem,
-  renderSystem,
-], store);
+// Start composer (reacts to $systems changes)
+const disposeComposer = composer(store);
 
-// Later, cleanup all systems (in reverse order)
-dispose();
+// Add systems by setting $systems atom
+set($systems, new Map<string, SystemEntry>([
+  ['input', { name: 'input', factory: inputSystem, dispose: null, enabled: true }],
+  ['physics', { name: 'physics', factory: physicsSystem, dispose: null, enabled: true }],
+  ['render', { name: 'render', factory: renderSystem, dispose: null, enabled: true }],
+]));
+
+// Enable/disable systems dynamically
+const systems = new Map(get($systems)!);
+systems.get('physics')!.enabled = false;  // Disable physics
+set($systems, systems);  // Composer reacts and calls dispose
+
+// Later, cleanup
+disposeComposer();
 ```
 
 ## License

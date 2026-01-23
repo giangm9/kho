@@ -6,10 +6,11 @@
 import { inject, provide, onUnmounted, readonly, shallowRef } from 'vue';
 import type { Ref, InjectionKey } from 'vue';
 import type { Atom, Store, System, Scope } from '../core/types';
-import type { AttributeAtom, EntityId } from '../core/ecs';
+import type { Attribute, Entity } from '../core/entity';
 import { createStore } from '../core/store';
 import { scope } from '../core/scope';
-import { assembler } from '../core/assembler';
+import { composer, $systems } from '../core/composer';
+import type { SystemEntry } from '../core/composer';
 
 // ============================================
 // Store Context (provide/inject Pattern)
@@ -40,10 +41,25 @@ export function provideStore(store: Store, systems?: System[]): void {
   const s = scope(store);
   provide(StoreKey, { store, scope: s });
 
+  // Start composer
+  const disposeComposer = composer(store);
+
+  // Register systems via $systems atom (data-driven)
   if (systems && systems.length > 0) {
-    const dispose = assembler(systems, store);
-    onUnmounted(dispose);
+    const systemsMap = new Map<string, SystemEntry>();
+    systems.forEach((factory, index) => {
+      const name = factory.name || `system_${index}`;
+      systemsMap.set(name, {
+        name,
+        factory,
+        dispose: null,
+        enabled: true,
+      });
+    });
+    s.set($systems, systemsMap);
   }
+
+  onUnmounted(disposeComposer);
 
   onUnmounted(() => {
     s.dispose();
@@ -234,9 +250,9 @@ export function useBatch(): (fn: () => void) => void {
  * Attribute getter/setter tuple returned by useAttribute
  */
 export type UseAttributeResult<T> = [
-  (entityId: EntityId) => T | undefined,
-  (entityId: EntityId, value: T) => void,
-  (entityId: EntityId) => void
+  (entity: Entity) => T | undefined,
+  (entity: Entity, value: T) => void,
+  (entity: Entity) => void
 ];
 
 /**
@@ -245,30 +261,27 @@ export type UseAttributeResult<T> = [
  *
  * @example
  * const [getPosition, setPosition, removePosition] = useAttribute($position);
- * const pos = getPosition('player');
- * setPosition('player', { x: 10, y: 20 });
+ * const pos = getPosition(player);
+ * setPosition(player, { x: 10, y: 20 });
  */
-export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
+export function useAttribute<T>(attr: Attribute<T>): UseAttributeResult<T> {
   const { scope: s } = useStoreInternal();
 
-  const get = (entityId: EntityId): T | undefined => {
+  const get = (entity: Entity): T | undefined => {
     const map = s.get(attr);
-    return map?.get(entityId);
+    return map?.get(entity);
   };
 
-  const set = (entityId: EntityId, value: T): void => {
-    const current = s.get(attr) || new Map();
-    const updated = new Map(current);
-    updated.set(entityId, value);
-    s.set(attr, updated);
+  const set = (entity: Entity, value: T): void => {
+    const map = s.get(attr)!;
+    map.set(entity, value);
+    s.notify(attr);
   };
 
-  const remove = (entityId: EntityId): void => {
-    const current = s.get(attr);
-    if (!current?.has(entityId)) return;
-    const updated = new Map(current);
-    updated.delete(entityId);
-    s.set(attr, updated);
+  const remove = (entity: Entity): void => {
+    const map = s.get(attr)!;
+    map.delete(entity);
+    s.notify(attr);
   };
 
   return [get, set, remove];
@@ -279,16 +292,16 @@ export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
  * Returns a reactive ref that updates when the specific entity changes
  *
  * @example
- * const playerPos = useAttributeValue($position, 'player');
+ * const playerPos = useAttributeValue($position, player);
  * // playerPos.value updates only when player's position changes
  */
 export function useAttributeValue<T>(
-  attr: AttributeAtom<T>,
-  entityId: EntityId
+  attr: Attribute<T>,
+  entity: Entity
 ): Readonly<Ref<T | undefined>> {
   const { store, scope: s } = useStoreInternal();
   const initialMap = s.get(attr);
-  const value = shallowRef<T | undefined>(initialMap?.get(entityId));
+  const value = shallowRef<T | undefined>(initialMap?.get(entity));
 
   // Create a scope for this subscription
   const { effect, get, dispose } = scope(store);
@@ -303,7 +316,7 @@ export function useAttributeValue<T>(
       return;
     }
     const newMap = get(attr);
-    const newValue = newMap?.get(entityId);
+    const newValue = newMap?.get(entity);
     // Only update if value changed (shallow comparison)
     if (value.value !== newValue) {
       // Deep comparison for objects
@@ -331,26 +344,23 @@ export function useAttributeValue<T>(
  *
  * @example
  * const [setPosition, removePosition] = useSetAttribute($position);
- * setPosition('player', { x: 10, y: 20 });
+ * setPosition(player, { x: 10, y: 20 });
  */
 export function useSetAttribute<T>(
-  attr: AttributeAtom<T>
-): [(entityId: EntityId, value: T) => void, (entityId: EntityId) => void] {
+  attr: Attribute<T>
+): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
   const { scope: s } = useStoreInternal();
 
-  const set = (entityId: EntityId, value: T): void => {
-    const current = s.get(attr) || new Map();
-    const updated = new Map(current);
-    updated.set(entityId, value);
-    s.set(attr, updated);
+  const set = (entity: Entity, value: T): void => {
+    const map = s.get(attr)!;
+    map.set(entity, value);
+    s.notify(attr);
   };
 
-  const remove = (entityId: EntityId): void => {
-    const current = s.get(attr);
-    if (!current?.has(entityId)) return;
-    const updated = new Map(current);
-    updated.delete(entityId);
-    s.set(attr, updated);
+  const remove = (entity: Entity): void => {
+    const map = s.get(attr)!;
+    map.delete(entity);
+    s.notify(attr);
   };
 
   return [set, remove];

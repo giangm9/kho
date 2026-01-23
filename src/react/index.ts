@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useContext, createContext, useCallback, useRef } from 'react';
 import type { Atom, Store, System, Scope } from '../core/types';
-import type { AttributeAtom, EntityId } from '../core/ecs';
+import type { Attribute, Entity } from '../core/entity';
 import { createStore } from '../core/store';
 import { scope } from '../core/scope';
-import { assembler } from '../core/assembler';
+import { composer, $systems } from '../core/composer';
+import type { SystemEntry } from '../core/composer';
 
 // ============================================
 // Store Context (Provider Pattern)
@@ -45,11 +46,25 @@ export function KhoProvider({ store, systems, children }: KhoProviderProps): Rea
   }
 
   useEffect(() => {
-    if (!systems || systems.length === 0) return;
+    // Start composer
+    const disposeComposer = composer(store);
 
-    const dispose = assembler(systems, store);
+    // Register systems via $systems atom (data-driven)
+    if (systems && systems.length > 0) {
+      const systemsMap = new Map<string, SystemEntry>();
+      systems.forEach((factory, index) => {
+        const name = factory.name || `system_${index}`;
+        systemsMap.set(name, {
+          name,
+          factory,
+          dispose: null,
+          enabled: true,
+        });
+      });
+      scopeRef.current!.set($systems, systemsMap);
+    }
 
-    return dispose;
+    return disposeComposer;
   }, [store, systems]);
 
   useEffect(() => {
@@ -280,11 +295,11 @@ export function useBatch(): (fn: () => void) => void {
  */
 export type UseAttributeResult<T> = [
   /** Get attribute value for an entity (reads directly from store) */
-  (entityId: EntityId) => T | undefined,
+  (entity: Entity) => T | undefined,
   /** Set attribute value for an entity */
-  (entityId: EntityId, value: T) => void,
+  (entity: Entity, value: T) => void,
   /** Remove attribute value for an entity */
-  (entityId: EntityId) => void
+  (entity: Entity) => void
 ];
 
 /**
@@ -313,30 +328,27 @@ export type UseAttributeResult<T> = [
  *   return <div>{pos?.x}, {pos?.y}</div>;
  * }
  */
-export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
+export function useAttribute<T>(attr: Attribute<T>): UseAttributeResult<T> {
   const { scope: s } = useStoreInternal();
 
   // Stable getter - reads directly from store (always fresh value)
-  const get = useCallback((entityId: EntityId): T | undefined => {
+  const get = useCallback((entity: Entity): T | undefined => {
     const map = s.get(attr);
-    return map?.get(entityId);
+    return map?.get(entity);
   }, [attr, s]);
 
-  // Stable setter
-  const set = useCallback((entityId: EntityId, value: T): void => {
-    const current = s.get(attr) || new Map();
-    const updated = new Map(current);
-    updated.set(entityId, value);
-    s.set(attr, updated);
+  // Stable setter - mutates WeakMap and notifies
+  const set = useCallback((entity: Entity, value: T): void => {
+    const map = s.get(attr)!;
+    map.set(entity, value);
+    s.notify(attr);
   }, [attr, s]);
 
   // Stable remover
-  const remove = useCallback((entityId: EntityId): void => {
-    const current = s.get(attr);
-    if (!current?.has(entityId)) return;
-    const updated = new Map(current);
-    updated.delete(entityId);
-    s.set(attr, updated);
+  const remove = useCallback((entity: Entity): void => {
+    const map = s.get(attr)!;
+    map.delete(entity);
+    s.notify(attr);
   }, [attr, s]);
 
   return [get, set, remove];
@@ -353,19 +365,19 @@ export function useAttribute<T>(attr: AttributeAtom<T>): UseAttributeResult<T> {
  * const enemyHealth = useAttributeValue($health, 'enemy1');
  */
 export function useAttributeValue<T>(
-  attr: AttributeAtom<T>,
-  entityId: EntityId
+  attr: Attribute<T>,
+  entity: Entity
 ): T | undefined {
   const { store, scope: s } = useStoreInternal();
   const [value, setValue] = useState<T | undefined>(() => {
     const map = s.get(attr);
-    return map?.get(entityId);
+    return map?.get(entity);
   });
 
   useEffect(() => {
     // Get initial value
     const map = s.get(attr);
-    setValue(map?.get(entityId));
+    setValue(map?.get(entity));
 
     // Create a scope for this subscription
     const { effect, get, dispose } = scope(store);
@@ -380,7 +392,7 @@ export function useAttributeValue<T>(
         return;
       }
       const newMap = get(attr);
-      const newValue = newMap?.get(entityId);
+      const newValue = newMap?.get(entity);
       setValue((prev) => {
         // Only trigger re-render if value actually changed
         if (prev === newValue) return prev;
@@ -399,7 +411,7 @@ export function useAttributeValue<T>(
     });
 
     return dispose;
-  }, [attr, entityId, store]);
+  }, [attr, entity, store]);
 
   return value;
 }
@@ -414,23 +426,20 @@ export function useAttributeValue<T>(
  * removePosition('enemy1');
  */
 export function useSetAttribute<T>(
-  attr: AttributeAtom<T>
-): [(entityId: EntityId, value: T) => void, (entityId: EntityId) => void] {
+  attr: Attribute<T>
+): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
   const { scope: s } = useStoreInternal();
 
-  const set = useCallback((entityId: EntityId, value: T): void => {
-    const current = s.get(attr) || new Map();
-    const updated = new Map(current);
-    updated.set(entityId, value);
-    s.set(attr, updated);
+  const set = useCallback((entity: Entity, value: T): void => {
+    const map = s.get(attr)!;
+    map.set(entity, value);
+    s.notify(attr);
   }, [attr, s]);
 
-  const remove = useCallback((entityId: EntityId): void => {
-    const current = s.get(attr);
-    if (!current?.has(entityId)) return;
-    const updated = new Map(current);
-    updated.delete(entityId);
-    s.set(attr, updated);
+  const remove = useCallback((entity: Entity): void => {
+    const map = s.get(attr)!;
+    map.delete(entity);
+    s.notify(attr);
   }, [attr, s]);
 
   return [set, remove];
