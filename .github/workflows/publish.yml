@@ -38,9 +38,6 @@ jobs:
 
       - name: Bump version and publish
         run: |
-          # Get current version
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-
           # Bump patch version
           npm version patch --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
