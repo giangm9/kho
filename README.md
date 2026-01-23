@@ -81,103 +81,78 @@ function App() {
 
 ## Core API
 
-### Types
+### Atom
 
 ```typescript
-// Atom - smallest unit of state
-type Atom<T> = {
-  initialFactory: () => T;
-  instances: WeakMap<Store, { value: T; listeners: Set<() => void> }>;
+import { atom } from 'kho';
+
+const $count = atom(0);
+const $user = atom<User | null>(null);
+const $items = atom<string[]>([]);
+```
+
+### Store & Scope
+
+```typescript
+import { createStore, scope } from 'kho';
+
+const store = createStore();
+const { get, set, effect, batch, dispose } = scope(store);
+
+// Get/set values
+const count = get($count);
+set($count, 10);
+
+// Reactive effect
+effect([$count], () => {
+  console.log('Count changed:', get($count));
+});
+
+// Batch updates (single notification)
+batch(() => {
+  set($a, 1);
+  set($b, 2);
+});
+
+// Cleanup
+dispose();
+```
+
+### Entity & Attribute (ECS)
+
+```typescript
+import { attribute, world } from 'kho';
+
+const $position = attribute<{ x: number; y: number }>();
+const $health = attribute<number>();
+
+const { entity, add, get, set, with: withAttrs } = world(store);
+
+const player = entity('player');
+add(player);
+set(player, $position, { x: 0, y: 0 });
+set(player, $health, 100);
+
+// Query entities
+for (const e of withAttrs($position)) {
+  console.log(get(e, $position));
 }
-
-// Store - central state container
-type Store = {
-  name: string;
-}
-
-// System - organized business logic
-type System = (store: Store) => () => void;
 ```
 
-### atom.ts
+### Signal
 
 ```typescript
-// Create atom with initial value
-atom<T>(initialValue: T): Atom<T>
+import { signal, listen } from 'kho';
 
-// Create atom with factory function (lazy initialization)
-atomWithFactory<T>(factory: () => T): Atom<T>
-```
+const $damage = signal<{ target: string; amount: number }>();
 
-### store.ts
+const { on, emit, dispose } = listen(store);
 
-```typescript
-// Create a new store
-createStore(name?: string): Store
-```
+on($damage, ({ target, amount }) => {
+  console.log(`${target} took ${amount} damage`);
+});
 
-### scope.ts
-
-```typescript
-const {
-  get,        // (atom) - get current value (or undefined)
-  set,        // (atom, value) - set value and notify listeners
-  notify,     // (atom) - trigger listeners manually
-  effect,     // (atoms[], callback) - reactive effect
-  debounce,   // (atoms[], ms, callback) - debounced effect
-  throttle,   // (atoms[], ms, callback) - throttled effect
-  interval,   // (ms, callback) - auto-cleanup interval
-  timeout,    // (ms, callback) - auto-cleanup timeout
-  onDispose,  // (callback) - register cleanup
-  batch,      // (callback) - batch updates
-  emit,       // () - flush pending batch
-  dispose,    // () - cleanup all
-} = scope(store);
-```
-
-### entity.ts (Entity-Component-System)
-
-```typescript
-// Types
-type EntityId = string;
-type Entity = { readonly id: EntityId };
-type Attribute<T> = Atom<WeakMap<Entity, T>>;
-
-// Create attribute (data column for entities)
-attribute<T>(): Attribute<T>
-
-// Create world accessor for entity operations
-const {
-  entity,   // (id) - get/create cached entity object
-  add,      // (entity) - add entity to world
-  remove,   // (entity) - remove entity from world
-  has,      // (entity) - check if entity exists
-  all,      // () - get all entities
-  get,      // (entity, attr) - get attribute value
-  set,      // (entity, attr, value) - set attribute value
-  delete,   // (entity, attr) - delete attribute
-  hasAttr,  // (entity, attr) - check if entity has attribute
-  with,     // (...attrs) - entities with all attributes
-  without,  // (...attrs) - entities without attributes
-} = world(store);
-```
-
-### composer.ts
-
-```typescript
-// System entry type
-type SystemEntry = {
-  name: string;
-  factory: System;
-  dispose: (() => void) | null;
-  enabled: boolean;
-}
-
-// Atom containing all registered systems
-$systems: Atom<Map<string, SystemEntry>>
-
-// Composer system - reacts to $systems changes
-composer(store: Store): () => void
+emit($damage, { target: 'player', amount: 10 });
 ```
 
 ## System Pattern
@@ -256,60 +231,6 @@ function gameSystem(store: Store) {
 
   return dispose;
 }
-```
-
-## Batching Updates
-
-Use `batch()` to group multiple updates into a single notification cycle:
-
-```typescript
-const { batch, set, effect, dispose } = scope(store);
-
-effect([$a, $b, $c], () => {
-  console.log('Effect triggered');
-});
-
-// Without batch: 3 effect triggers
-set($a, 1);
-set($b, 2);
-set($c, 3);
-
-// With batch: 1 effect trigger
-batch(() => {
-  set($a, 1);
-  set($b, 2);
-  set($c, 3);
-});
-```
-
-## Composing Multiple Systems
-
-Composer uses data-driven approach - systems are managed through an atom:
-
-```typescript
-import { createStore, scope, composer, $systems } from 'kho';
-import type { SystemEntry } from 'kho';
-
-const store = createStore('app');
-const { set, get } = scope(store);
-
-// Start composer (reacts to $systems changes)
-const disposeComposer = composer(store);
-
-// Add systems by setting $systems atom
-set($systems, new Map<string, SystemEntry>([
-  ['input', { name: 'input', factory: inputSystem, dispose: null, enabled: true }],
-  ['physics', { name: 'physics', factory: physicsSystem, dispose: null, enabled: true }],
-  ['render', { name: 'render', factory: renderSystem, dispose: null, enabled: true }],
-]));
-
-// Enable/disable systems dynamically
-const systems = new Map(get($systems)!);
-systems.get('physics')!.enabled = false;  // Disable physics
-set($systems, systems);  // Composer reacts and calls dispose
-
-// Later, cleanup
-disposeComposer();
 ```
 
 ## License
