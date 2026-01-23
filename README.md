@@ -315,3 +315,4 @@ disposeComposer();
 ## License
 
 MIT
+
