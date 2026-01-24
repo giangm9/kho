@@ -20,17 +20,17 @@ import type { Store } from './types';
  * Signal type - fire-and-forget event emitter
  * Unlike Atom, Signal does not store value - it only dispatches to handlers
  */
-export type Signal<T> = {
+export type Signal<T = void> = {
   readonly _brand: 'signal';
-  readonly handlers: WeakMap<Store, Set<(value: T) => void>>;
+  readonly handlers: WeakMap<Store, Set<(value?: T) => void>>;
 };
 
 /**
  * Listener type - returned by listen()
  */
 export type Listener = {
-  on<T>(signal: Signal<T>, handler: (value: T) => void): () => void;
-  emit<T>(signal: Signal<T>, value: T): void;
+  on<T = void>(signal: Signal<T>, handler: (value?: T) => void): () => void;
+  emit<T = void>(signal: Signal<T>, value?: T): void;
   dispose(): void;
 };
 
@@ -82,11 +82,11 @@ export function signal<T>(): Signal<T> {
 export function listen(store: Store): Listener {
   const disposables: Array<() => void> = [];
 
-  function on<T>(signal: Signal<T>, handler: (value: T) => void): () => void {
+  function on<T = void>(signal: Signal<T>, handler: (value?: T) => void): () => void {
     let handlers = signal.handlers.get(store);
     if (!handlers) {
       handlers = new Set();
-      (signal.handlers as WeakMap<Store, Set<(value: T) => void>>).set(store, handlers);
+      (signal.handlers as WeakMap<Store, Set<(value?: T) => void>>).set(store, handlers);
     }
     handlers.add(handler);
 
@@ -98,7 +98,7 @@ export function listen(store: Store): Listener {
     return unsubscribe;
   }
 
-  function emit<T>(signal: Signal<T>, value: T): void {
+  function emit<T = void>(signal: Signal<T>, value?: T): void {
     const handlers = signal.handlers.get(store);
     if (handlers) {
       handlers.forEach((handler) => handler(value));
