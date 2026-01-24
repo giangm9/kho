@@ -94,6 +94,13 @@ export function scope(store: Store): Scope {
     return unsubscribe;
   }
 
+  const compute = <T>(sources: Atom<any>[], target: Atom<T>, fn: (...values: any[]) => T) => {
+    return effect(sources, () => {
+      const values = sources.map(s => get(s));
+      set(target, fn(...values));
+    });
+  };
+
   const debounce = (atoms: Atom<any>[], ms: number, callback: () => void | (() => void)) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let effectCleanup: (() => void) | null = null;
@@ -207,5 +214,5 @@ export function scope(store: Store): Scope {
     scopeCleanups.length = 0;
   };
 
-  return { get, set, notify, effect, debounce, throttle, interval, timeout, onDispose, batch, emit, dispose };
+  return { get, set, notify, effect, compute, debounce, throttle, interval, timeout, onDispose, batch, emit, dispose };
 }

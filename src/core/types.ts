@@ -12,6 +12,7 @@ export type Scope = {
   set<T>(atom: Atom<T>, value: T): void;
   notify(atom: Atom<any>): void;
   effect(atoms: Atom<any>[], callback: () => void | (() => void)): () => void;
+  compute<T>(sources: Atom<any>[], target: Atom<T>, fn: (...values: any[]) => T): () => void;
   debounce(atoms: Atom<any>[], ms: number, callback: () => void | (() => void)): () => void;
   throttle(atoms: Atom<any>[], ms: number, callback: () => void | (() => void)): () => void;
   interval(ms: number, callback: () => void): () => void;
@@ -20,8 +21,6 @@ export type Scope = {
   batch(callback: () => void): void;
   emit(): void;
   dispose(): void;
-
-
 }
 
 export type System = (store: Store) => () => void;
