@@ -28,9 +28,6 @@ export type World = {
   without(...attrs: Attribute<any>[]): Entity[];
 };
 
-/** Entity registry atom */
-export const $entities: Atom<Set<Entity>> = atomWithFactory(() => new Set());
-
 /**
  * Create an attribute (data column for entities)
  * Uses WeakMap for automatic cleanup when entity is GC'd
@@ -47,13 +44,25 @@ export function attribute<T>(): Attribute<T> {
 }
 
 /**
+ * Create an entities atom (entity registry)
+ *
+ * @example
+ * const $players = entities();
+ * const $enemies = entities();
+ */
+export function entities(): Atom<Set<Entity>> {
+  return atomWithFactory<Set<Entity>>(() => new Set());
+}
+
+/**
  * Create a world accessor for entity operations
  *
  * @example
+ * const $players = entities();
  * const $position = attribute<{ x: number; y: number }>();
  * const $health = attribute<number>();
  *
- * const { entity, add, remove, get, set } = world(store);
+ * const { entity, add, remove, get, set } = world(store, $players);
  * const player = entity('player');
  *
  * add(player);
@@ -63,7 +72,7 @@ export function attribute<T>(): Attribute<T> {
  * get(player, $position);  // { x: 0, y: 0 }
  * remove(player);
  */
-export function world(store: Store): World {
+export function world(store: Store, $entities: Atom<Set<Entity>>): World {
   const s = scope(store);
   const entityCache = new Map<EntityId, Entity>();
 
@@ -78,15 +87,15 @@ export function world(store: Store): World {
     },
 
     add(entity: Entity): void {
-      const entities = new Set(s.get($entities)!);
-      entities.add(entity);
-      s.set($entities, entities);
+      const set = new Set(s.get($entities)!);
+      set.add(entity);
+      s.set($entities, set);
     },
 
     remove(entity: Entity): void {
-      const entities = new Set(s.get($entities)!);
-      entities.delete(entity);
-      s.set($entities, entities);
+      const set = new Set(s.get($entities)!);
+      set.delete(entity);
+      s.set($entities, set);
     },
 
     has(entity: Entity): boolean {
@@ -118,15 +127,15 @@ export function world(store: Store): World {
     },
 
     with(...attrs: Attribute<any>[]): Entity[] {
-      const entities = s.get($entities)!;
-      return Array.from(entities).filter(entity =>
+      const all = s.get($entities)!;
+      return Array.from(all).filter(entity =>
         attrs.every(attr => s.get(attr)!.has(entity))
       );
     },
 
     without(...attrs: Attribute<any>[]): Entity[] {
-      const entities = s.get($entities)!;
-      return Array.from(entities).filter(entity =>
+      const all = s.get($entities)!;
+      return Array.from(all).filter(entity =>
         attrs.every(attr => !s.get(attr)!.has(entity))
       );
     },
