@@ -8,7 +8,9 @@ export type EntityId = string;
 export type Entity = { readonly id: EntityId };
 
 /** Attribute - Atom storing WeakMap<Entity, T> for auto-cleanup */
-export type Attribute<T> = Atom<WeakMap<Entity, T>>;
+export type Attribute<T> = Atom<WeakMap<Entity, T>> & {
+  defaultFactory?: () => T;
+};
 
 /** @deprecated Use Attribute instead */
 export type AttributeAtom<T> = Attribute<T>;
@@ -40,7 +42,21 @@ export type World = {
  * effect([$health], () => { ... });
  */
 export function attribute<T>(): Attribute<T> {
-  return atomWithFactory<WeakMap<Entity, T>>(() => new WeakMap());
+  return atomWithFactory<WeakMap<Entity, T>>(() => new WeakMap()) as Attribute<T>;
+}
+
+/**
+ * Create an attribute with a default factory
+ * Each entity gets a fresh value from the factory when accessed
+ *
+ * @example
+ * const $position = attributeWithFactory(() => ({ x: 0, y: 0 }));
+ * const $health = attributeWithFactory(() => 100);
+ */
+export function attributeWithFactory<T>(defaultFactory: () => T): Attribute<T> {
+  const attr = atomWithFactory<WeakMap<Entity, T>>(() => new WeakMap()) as Attribute<T>;
+  attr.defaultFactory = defaultFactory;
+  return attr;
 }
 
 /**
@@ -107,7 +123,8 @@ export function world(store: Store, $entities: Atom<Set<Entity>>): World {
     },
 
     get<T>(entity: Entity, attr: Attribute<T>): T | undefined {
-      return s.get(attr)!.get(entity);
+      const value = s.get(attr)!.get(entity);
+      return value !== undefined ? value : attr.defaultFactory?.();
     },
 
     set<T>(entity: Entity, attr: Attribute<T>, value: T): void {

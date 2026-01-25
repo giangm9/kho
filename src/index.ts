@@ -10,7 +10,7 @@ export type { Atom, Store, System, Scope, Signal, Listener } from './core/types'
 export { atom } from './core/atom';
 export { createStore } from './core/store';
 export { scope } from './core/scope';
-export { attribute, entities, world } from './core/entity';
+export { attribute, attributeWithFactory, entities, world } from './core/entity';
 export type { EntityId, Entity, Attribute, AttributeAtom, World } from './core/entity';
 export { composer, $systems } from './core/composer';
 export type { SystemEntry } from './core/composer';
