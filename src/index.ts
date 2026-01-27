@@ -7,7 +7,7 @@
 // Types
 export type { Atom, Store, System, Scope, Signal, Listener } from './core/types';
 
-export { atom } from './core/atom';
+export { atom, atomWithFactory } from './core/atom';
 export { createStore } from './core/store';
 export { scope } from './core/scope';
 export { attribute, attributeWithFactory, entities, world } from './core/entity';
