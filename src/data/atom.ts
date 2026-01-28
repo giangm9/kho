@@ -1,4 +1,4 @@
-import { Atom, Store } from './types'
+import { Atom, Store } from '../types'
 
 type InstanceEntry<T> = {
   value: T;

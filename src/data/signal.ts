@@ -14,7 +14,7 @@
  *   emit($itemPickup, { item });
  */
 
-import type { Store } from './types';
+import type { Store } from '../types';
 
 /**
  * Signal type - fire-and-forget event emitter

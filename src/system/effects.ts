@@ -1,47 +1,42 @@
+/**
+ * Effects - Reactive effect system for responding to data changes
+ *
+ * Provides effect, compute, batch, and timing utilities.
+ * Use with `reactive` for data access.
+ *
+ * @example
+ * const { atoms } = reactive(store);
+ * const { effect, compute, dispose } = effects(store);
+ *
+ * // React to changes
+ * effect([$count], () => {
+ *   console.log('Count:', atoms.get($count));
+ * });
+ *
+ * // Computed values
+ * compute([$a, $b], $sum, (a, b) => a + b);
+ *
+ * // Batch updates
+ * batch(() => {
+ *   atoms.set($a, 1);
+ *   atoms.set($b, 2);
+ * });
+ *
+ * // Cleanup
+ * dispose();
+ */
 
-import { Atom, Store, Scope } from "./types"
+import { Atom, Store, Effects } from "../types"
+import { reactive } from "../data/reactive"
 
-export function scope(store: Store): Scope {
+export function effects(store: Store): Effects {
+  const r = reactive(store);
   const scopeCleanups: (() => void)[] = [];
   let pendingBatch: Set<() => void> | null = null;
 
-  const get = <T>(atom: Atom<T>): T | undefined => {
-    let entry = atom.instances.get(store);
-    if (!entry) {
-      // Initialize atom from its factory if it hasn't been set yet
-      entry = {
-        value: atom.initialFactory(),
-        listeners: new Set<() => void>(),
-      };
-      atom.instances.set(store, entry);
-    }
-    return entry.value;
-  };
-
-  const set = <T>(atom: Atom<T>, value: T): void => {
-    let entry = atom.instances.get(store);
-    if (!entry) {
-      entry = {
-        value,
-        listeners: new Set<() => void>(),
-      };
-      atom.instances.set(store, entry);
-    } else {
-      entry.value = value;
-      notify(atom);
-    }
-  };
-
-  const notify = (atom: Atom<any>): void => {
-    const entry = atom.instances.get(store);
-    if (entry) {
-      if (pendingBatch) {
-        entry.listeners.forEach((listener) => pendingBatch!.add(listener));
-      } else {
-        entry.listeners.forEach((listener) => listener());
-      }
-    }
-  };
+  // ============================================
+  // Effect system
+  // ============================================
 
   const effect = (atoms: Atom<any>[], callback: () => void | (() => void)) => {
     const cleanups: (() => void)[] = [];
@@ -58,33 +53,39 @@ export function scope(store: Store): Scope {
       }
 
       const listener = () => {
-        // Cleanup previous
+        // Check if we're in a batch
+        if (pendingBatch) {
+          pendingBatch.add(runEffect);
+        } else {
+          runEffect();
+        }
+      };
+
+      const runEffect = () => {
         for (const cleanup of cleanups) {
           cleanup();
         }
         cleanups.length = 0;
 
-        // Run effect
         const cleanup = callback();
         if (cleanup) {
           cleanups.push(cleanup);
         }
-      }
+      };
+
       instance.listeners.add(listener);
       listeners.push(() => {
         instance!.listeners.delete(listener);
       });
 
       // Initial run
-      listener();
+      runEffect();
     }
 
     const unsubscribe = () => {
-      // Cleanup listeners
       for (const removeListener of listeners) {
         removeListener();
       }
-      // Cleanup effects
       for (const cleanup of cleanups) {
         cleanup();
       }
@@ -96,8 +97,8 @@ export function scope(store: Store): Scope {
 
   const compute = <T>(sources: Atom<any>[], target: Atom<T>, fn: (...values: any[]) => T) => {
     return effect(sources, () => {
-      const values = sources.map(s => get(s));
-      set(target, fn(...values));
+      const values = sources.map(s => r.atoms.get(s));
+      r.atoms.set(target, fn(...values));
     });
   };
 
@@ -150,7 +151,6 @@ export function scope(store: Store): Scope {
         lastRun = now;
         effectCleanup = callback() || null;
       } else {
-        // Schedule for remaining time
         if (pendingTimeoutId) clearTimeout(pendingTimeoutId);
         pendingTimeoutId = setTimeout(() => {
           lastRun = Date.now();
@@ -212,7 +212,19 @@ export function scope(store: Store): Scope {
       cleanup();
     }
     scopeCleanups.length = 0;
+    r.dispose();
   };
 
-  return { get, set, notify, effect, compute, debounce, throttle, interval, timeout, onDispose, batch, emit, dispose };
+  return {
+    effect,
+    compute,
+    debounce,
+    throttle,
+    interval,
+    timeout,
+    onDispose,
+    batch,
+    emit,
+    dispose,
+  };
 }

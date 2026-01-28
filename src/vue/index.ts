@@ -5,12 +5,12 @@
 
 import { inject, provide, onUnmounted, readonly, shallowRef } from 'vue';
 import type { Ref, InjectionKey } from 'vue';
-import type { Atom, Store, System, Scope } from '../core/types';
-import type { Attribute, Entity } from '../core/entity';
-import { createStore } from '../core/store';
-import { scope } from '../core/scope';
-import { composer, $systems } from '../core/composer';
-import type { SystemEntry } from '../core/composer';
+import type { Atom, Store, System, Reactive, Effects } from '../types';
+import type { Component, Entity } from '../data/entity';
+import { createStore } from '../data/store';
+import { reactive } from '../data/reactive';
+import { effects } from '../system/effects';
+import { ignite, $systems } from '../system/assembler';
 
 // ============================================
 // Store Context (provide/inject Pattern)
@@ -18,7 +18,7 @@ import type { SystemEntry } from '../core/composer';
 
 type StoreContextValue = {
   store: Store;
-  scope: Scope;
+  reactive: Reactive;
 };
 
 const StoreKey: InjectionKey<StoreContextValue> = Symbol('kho-store');
@@ -29,40 +29,33 @@ const StoreKey: InjectionKey<StoreContextValue> = Symbol('kho-store');
  *
  * @example
  * // App.vue
+ * <script setup>
  * import { createStore } from 'kho';
  * import { provideStore } from 'kho/vue';
  *
- * setup() {
- *   const store = createStore();
- *   provideStore(store);
- * }
+ * const store = createStore();
+ * provideStore(store);
+ * // Or with systems:
+ * // provideStore(store, [gameSystem, uiSystem]);
+ * </script>
  */
 export function provideStore(store: Store, systems?: System[]): void {
-  const s = scope(store);
-  provide(StoreKey, { store, scope: s });
+  const r = reactive(store);
+  provide(StoreKey, { store, reactive: r });
 
-  // Start composer
-  const disposeComposer = composer(store);
-
-  // Register systems via $systems atom (data-driven)
+  // Register systems - ignite will auto-start them
   if (systems && systems.length > 0) {
-    const systemsMap = new Map<string, SystemEntry>();
-    systems.forEach((factory, index) => {
-      const name = factory.name || `system_${index}`;
-      systemsMap.set(name, {
-        name,
-        factory,
-        dispose: null,
-        enabled: true,
-      });
-    });
-    s.set($systems, systemsMap);
+    for (const sys of systems) {
+      r.sets.add($systems, sys);
+    }
   }
 
-  onUnmounted(disposeComposer);
+  // Ignite the store
+  const dispose = ignite(store);
 
   onUnmounted(() => {
-    s.dispose();
+    dispose();
+    r.dispose();
   });
 }
 
@@ -71,30 +64,30 @@ export function provideStore(store: Store, systems?: System[]): void {
 // ============================================
 
 let globalStore: Store | null = null;
-let globalScope: Scope | null = null;
+let globalReactive: Reactive | null = null;
 
 export function setGlobalStore(store: Store): void {
   globalStore = store;
-  globalScope = scope(store);
+  globalReactive = reactive(store);
 }
 
 export function getGlobalStore(): Store {
   if (!globalStore) {
     globalStore = createStore();
-    globalScope = scope(globalStore);
+    globalReactive = reactive(globalStore);
   }
   return globalStore;
 }
 
-function getGlobalScope(): Scope {
-  if (!globalScope) {
+function getGlobalReactive(): Reactive {
+  if (!globalReactive) {
     getGlobalStore(); // This will initialize both
   }
-  return globalScope!;
+  return globalReactive!;
 }
 
 // ============================================
-// Internal: Get store and scope from context or global
+// Internal: Get store and reactive from context or global
 // ============================================
 
 function useStoreInternal(): StoreContextValue {
@@ -102,7 +95,7 @@ function useStoreInternal(): StoreContextValue {
   if (contextValue) {
     return contextValue;
   }
-  return { store: getGlobalStore(), scope: getGlobalScope() };
+  return { store: getGlobalStore(), reactive: getGlobalReactive() };
 }
 
 // ============================================
@@ -129,29 +122,29 @@ export function useStore(): Store {
  * // setCount(5) updates the atom
  */
 export function useAtom<T>(atom: Atom<T>): [Readonly<Ref<T>>, (value: T) => void] {
-  const { store, scope: s } = useStoreInternal();
-  const value = shallowRef<T>(s.get(atom) as T);
+  const { store, reactive: r } = useStoreInternal();
+  const value = shallowRef<T>(r.atoms.get(atom) as T);
 
-  // Create a scope for this subscription
-  const { effect, get, dispose } = scope(store);
+  // Create an effects instance for this subscription
+  const e = effects(store);
 
   // Use a flag to skip the initial run since we already have the value
   let isFirstRun = true;
 
   // Subscribe to atom changes using effect
-  effect([atom], () => {
+  e.effect([atom], () => {
     if (isFirstRun) {
       isFirstRun = false;
       return;
     }
-    value.value = get(atom) as T;
+    value.value = r.atoms.get(atom) as T;
   });
 
   // Cleanup on component unmount
-  onUnmounted(dispose);
+  onUnmounted(e.dispose);
 
   const setValue = (newValue: T): void => {
-    s.set(atom, newValue);
+    r.atoms.set(atom, newValue);
   };
 
   return [readonly(value) as Readonly<Ref<T>>, setValue];
@@ -165,26 +158,26 @@ export function useAtom<T>(atom: Atom<T>): [Readonly<Ref<T>>, (value: T) => void
  * // count.value is reactive and read-only
  */
 export function useAtomValue<T>(atom: Atom<T>): Readonly<Ref<T>> {
-  const { store, scope: s } = useStoreInternal();
-  const value = shallowRef<T>(s.get(atom) as T);
+  const { store, reactive: r } = useStoreInternal();
+  const value = shallowRef<T>(r.atoms.get(atom) as T);
 
-  // Create a scope for this subscription
-  const { effect, get, dispose } = scope(store);
+  // Create an effects instance for this subscription
+  const e = effects(store);
 
   // Use a flag to skip the initial run since we already have the value
   let isFirstRun = true;
 
   // Subscribe to atom changes using effect
-  effect([atom], () => {
+  e.effect([atom], () => {
     if (isFirstRun) {
       isFirstRun = false;
       return;
     }
-    value.value = get(atom) as T;
+    value.value = r.atoms.get(atom) as T;
   });
 
   // Cleanup on component unmount
-  onUnmounted(dispose);
+  onUnmounted(e.dispose);
 
   return readonly(value) as Readonly<Ref<T>>;
 }
@@ -197,32 +190,52 @@ export function useAtomValue<T>(atom: Atom<T>): Readonly<Ref<T>> {
  * setCount(5);
  */
 export function useSetAtom<T>(atom: Atom<T>): (value: T) => void {
-  const { scope: s } = useStoreInternal();
+  const { reactive: r } = useStoreInternal();
 
   return (newValue: T): void => {
-    s.set(atom, newValue);
+    r.atoms.set(atom, newValue);
   };
 }
 
 /**
- * Vue composable to get a scope instance
+ * Vue composable to get a reactive instance
  * Automatically disposes on component unmount
  *
  * @example
- * const s = useScope();
- * s.effect([$count], () => {
- *   console.log('Count changed:', s.get($count));
- * });
+ * const { atoms, sets, maps } = useReactive();
+ * atoms.set($count, 10);
+ * sets.add($users, user);
  */
-export function useScope(): Scope {
+export function useReactive(): Reactive {
   const { store } = useStoreInternal();
-  const s = scope(store);
+  const r = reactive(store);
 
   onUnmounted(() => {
-    s.dispose();
+    r.dispose();
   });
 
-  return s;
+  return r;
+}
+
+/**
+ * Vue composable to get an effects instance
+ * Automatically disposes on component unmount
+ *
+ * @example
+ * const { effect, batch } = useEffects();
+ * effect([$count], () => {
+ *   console.log('count changed');
+ * });
+ */
+export function useEffects(): Effects {
+  const { store } = useStoreInternal();
+  const e = effects(store);
+
+  onUnmounted(() => {
+    e.dispose();
+  });
+
+  return e;
 }
 
 /**
@@ -231,91 +244,91 @@ export function useScope(): Scope {
  * @example
  * const batch = useBatch();
  * batch(() => {
- *   s.set($count, 10);
- *   s.set($name, 'Alice');
+ *   atom.set($count, 10);
+ *   atom.set($name, 'Alice');
  * });
  */
 export function useBatch(): (fn: () => void) => void {
-  const s = useScope();
+  const e = useEffects();
   return (fn: () => void): void => {
-    s.batch(fn);
+    e.batch(fn);
   };
 }
 
 // ============================================
-// Attribute Composables
+// ECS Component Composables
 // ============================================
 
 /**
- * Attribute getter/setter tuple returned by useAttribute
+ * Component getter/setter tuple returned by useComponent
  */
-export type UseAttributeResult<T> = [
+export type UseComponentResult<T> = [
   (entity: Entity) => T | undefined,
   (entity: Entity, value: T) => void,
   (entity: Entity) => void
 ];
 
 /**
- * Vue composable for attribute access with stable functions
- * Functions don't trigger reactivity - use useAttributeValue for reactive access
+ * Vue composable for ECS component access with stable functions
+ * Functions don't trigger reactivity - use useComponentValue for reactive access
  *
  * @example
- * const [getPosition, setPosition, removePosition] = useAttribute($position);
+ * const [getPosition, setPosition, removePosition] = useComponent($position);
  * const pos = getPosition(player);
  * setPosition(player, { x: 10, y: 20 });
  */
-export function useAttribute<T>(attr: Attribute<T>): UseAttributeResult<T> {
-  const { scope: s } = useStoreInternal();
+export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
+  const { reactive: r } = useStoreInternal();
 
   const get = (entity: Entity): T | undefined => {
-    const map = s.get(attr);
+    const map = r.atoms.get(comp);
     return map?.get(entity);
   };
 
   const set = (entity: Entity, value: T): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.set(entity, value);
-    s.notify(attr);
+    r.atoms.notify(comp);
   };
 
   const remove = (entity: Entity): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.delete(entity);
-    s.notify(attr);
+    r.atoms.notify(comp);
   };
 
   return [get, set, remove];
 }
 
 /**
- * Vue composable to read a single entity's attribute value
+ * Vue composable to read a single entity's component value
  * Returns a reactive ref that updates when the specific entity changes
  *
  * @example
- * const playerPos = useAttributeValue($position, player);
+ * const playerPos = useComponentValue($position, player);
  * // playerPos.value updates only when player's position changes
  */
-export function useAttributeValue<T>(
-  attr: Attribute<T>,
+export function useComponentValue<T>(
+  comp: Component<T>,
   entity: Entity
 ): Readonly<Ref<T | undefined>> {
-  const { store, scope: s } = useStoreInternal();
-  const initialMap = s.get(attr);
+  const { store, reactive: r } = useStoreInternal();
+  const initialMap = r.atoms.get(comp);
   const value = shallowRef<T | undefined>(initialMap?.get(entity));
 
-  // Create a scope for this subscription
-  const { effect, get, dispose } = scope(store);
+  // Create an effects instance for this subscription
+  const e = effects(store);
 
   // Use a flag to skip the initial run
   let isFirstRun = true;
 
-  // Subscribe to attribute changes using effect
-  effect([attr], () => {
+  // Subscribe to component changes using effect
+  e.effect([comp], () => {
     if (isFirstRun) {
       isFirstRun = false;
       return;
     }
-    const newMap = get(attr);
+    const newMap = r.atoms.get(comp);
     const newValue = newMap?.get(entity);
     // Only update if value changed (shallow comparison)
     if (value.value !== newValue) {
@@ -334,34 +347,50 @@ export function useAttributeValue<T>(
   });
 
   // Cleanup on component unmount
-  onUnmounted(dispose);
+  onUnmounted(e.dispose);
 
   return readonly(value) as Readonly<Ref<T | undefined>>;
 }
 
 /**
- * Vue composable to get only setter functions for attributes
+ * Vue composable to get only setter functions for components
  *
  * @example
- * const [setPosition, removePosition] = useSetAttribute($position);
+ * const [setPosition, removePosition] = useSetComponent($position);
  * setPosition(player, { x: 10, y: 20 });
  */
-export function useSetAttribute<T>(
-  attr: Attribute<T>
+export function useSetComponent<T>(
+  comp: Component<T>
 ): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
-  const { scope: s } = useStoreInternal();
+  const { reactive: r } = useStoreInternal();
 
   const set = (entity: Entity, value: T): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.set(entity, value);
-    s.notify(attr);
+    r.atoms.notify(comp);
   };
 
   const remove = (entity: Entity): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.delete(entity);
-    s.notify(attr);
+    r.atoms.notify(comp);
   };
 
   return [set, remove];
 }
+
+// ============================================
+// Deprecated aliases for backwards compatibility
+// ============================================
+
+/** @deprecated Use UseComponentResult instead */
+export type UseAttributeResult<T> = UseComponentResult<T>;
+
+/** @deprecated Use useComponent instead */
+export const useAttribute = useComponent;
+
+/** @deprecated Use useComponentValue instead */
+export const useAttributeValue = useComponentValue;
+
+/** @deprecated Use useSetComponent instead */
+export const useSetAttribute = useSetComponent;

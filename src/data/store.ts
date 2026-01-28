@@ -1,4 +1,4 @@
-import { Store } from "./types";
+import { Store } from "../types";
 
 export function createStore(name?: string): Store {
   return {

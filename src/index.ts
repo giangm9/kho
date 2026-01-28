@@ -4,14 +4,39 @@
  * Public API exports
  */
 
-// Types
-export type { Atom, Store, System, Scope, Signal, Listener } from './core/types';
+// Core types
+export type {
+  Atom,
+  Store,
+  System,
+  Reactive,
+  ReactiveAtom,
+  ReactiveSet,
+  ReactiveMap,
+  Effects,
+} from './types';
 
-export { atom, atomWithFactory } from './core/atom';
-export { createStore } from './core/store';
-export { scope } from './core/scope';
-export { attribute, attributeWithFactory, entities, world } from './core/entity';
-export type { EntityId, Entity, Attribute, AttributeAtom, World } from './core/entity';
-export { composer, $systems } from './core/composer';
-export type { SystemEntry } from './core/composer';
-export { signal, listen } from './core/signal';
+// Data layer
+export { atom, atomWithFactory } from './data/atom';
+export { createStore } from './data/store';
+export { reactive } from './data/reactive';
+export { signal, listen } from './data/signal';
+export type { Signal, Listener } from './data/signal';
+
+// System layer
+export { effects } from './system/effects';
+export { system } from './system/system';
+export { ignite, $systems, $state } from './system/assembler';
+
+// Attribute system (generic object attributes)
+export { registry, attribute, attributeWithFactory, attributes } from './data/attribute';
+export type { Attribute, Attributes } from './data/attribute';
+
+// ECS (Entity Component System)
+export { component, componentWithFactory, entities, world } from './data/entity';
+export type { EntityId, Entity, Component, World } from './data/entity';
+
+// Deprecated exports for backwards compatibility
+export { attribute as attributeECS, attributeWithFactory as attributeWithFactoryECS } from './data/entity';
+export type { Attribute as AttributeECS, AttributeAtom } from './data/entity';
+

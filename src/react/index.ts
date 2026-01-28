@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useContext, createContext, useCallback, useRef } from 'react';
-import type { Atom, Store, System, Scope } from '../core/types';
-import type { Attribute, Entity } from '../core/entity';
-import { createStore } from '../core/store';
-import { scope } from '../core/scope';
-import { composer, $systems } from '../core/composer';
-import type { SystemEntry } from '../core/composer';
+import type { Atom, Store, System, Reactive, Effects } from '../types';
+import type { Component, Entity } from '../data/entity';
+import { createStore } from '../data/store';
+import { reactive } from '../data/reactive';
+import { effects } from '../system/effects';
+import { ignite, $systems } from '../system/assembler';
 
 // ============================================
 // Store Context (Provider Pattern)
@@ -12,7 +12,7 @@ import type { SystemEntry } from '../core/composer';
 
 type StoreContextValue = {
   store: Store;
-  scope: Scope;
+  reactive: Reactive;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -39,41 +39,38 @@ export type KhoProviderProps = {
 };
 
 export function KhoProvider({ store, systems, children }: KhoProviderProps): React.ReactElement {
-  // Create a single scope for the provider
-  const scopeRef = useRef<Scope | null>(null);
-  if (!scopeRef.current) {
-    scopeRef.current = scope(store);
+  // Create a single reactive instance for the provider
+  const reactiveRef = useRef<Reactive | null>(null);
+  if (!reactiveRef.current) {
+    reactiveRef.current = reactive(store);
   }
 
   useEffect(() => {
-    // Start composer
-    const disposeComposer = composer(store);
+    // Register systems - ignite will auto-start them
+    const r = reactive(store);
 
-    // Register systems via $systems atom (data-driven)
     if (systems && systems.length > 0) {
-      const systemsMap = new Map<string, SystemEntry>();
-      systems.forEach((factory, index) => {
-        const name = factory.name || `system_${index}`;
-        systemsMap.set(name, {
-          name,
-          factory,
-          dispose: null,
-          enabled: true,
-        });
-      });
-      scopeRef.current!.set($systems, systemsMap);
+      for (const sys of systems) {
+        r.sets.add($systems, sys);
+      }
     }
 
-    return disposeComposer;
+    // Ignite the store
+    const dispose = ignite(store);
+
+    return () => {
+      dispose();
+      r.dispose();
+    };
   }, [store, systems]);
 
   useEffect(() => {
     return () => {
-      scopeRef.current?.dispose();
+      reactiveRef.current?.dispose();
     };
   }, []);
 
-  const contextValue = { store, scope: scopeRef.current };
+  const contextValue = { store, reactive: reactiveRef.current };
 
   return React.createElement(StoreContext.Provider, { value: contextValue }, children);
 }
@@ -83,26 +80,26 @@ export function KhoProvider({ store, systems, children }: KhoProviderProps): Rea
 // ============================================
 
 let globalStore: Store | null = null;
-let globalScope: Scope | null = null;
+let globalReactive: Reactive | null = null;
 
 export function setGlobalStore(store: Store) {
   globalStore = store;
-  globalScope = scope(store);
+  globalReactive = reactive(store);
 }
 
 export function getGlobalStore(): Store {
   if (!globalStore) {
     globalStore = createStore();
-    globalScope = scope(globalStore);
+    globalReactive = reactive(globalStore);
   }
   return globalStore;
 }
 
-function getGlobalScope(): Scope {
-  if (!globalScope) {
+function getGlobalReactive(): Reactive {
+  if (!globalReactive) {
     getGlobalStore(); // This will initialize both
   }
-  return globalScope!;
+  return globalReactive!;
 }
 
 // ============================================
@@ -115,7 +112,7 @@ function useStoreInternal(): StoreContextValue {
     return contextValue;
   }
   // Fallback to global store for backwards compatibility
-  return { store: getGlobalStore(), scope: getGlobalScope() };
+  return { store: getGlobalStore(), reactive: getGlobalReactive() };
 }
 
 // ============================================
@@ -133,41 +130,41 @@ function useStoreInternal(): StoreContextValue {
  * setCount(c => c + 1);  // Updater function
  */
 export function useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => void] {
-  const { store, scope: s } = useStoreInternal();
-  const [value, setValue] = useState<T>(() => s.get(atom) as T);
+  const { store, reactive: r } = useStoreInternal();
+  const [value, setValue] = useState<T>(() => r.atoms.get(atom) as T);
 
   useEffect(() => {
     // Sync state if atom value changed externally
-    setValue(s.get(atom) as T);
+    setValue(r.atoms.get(atom) as T);
 
-    // Create a scope for this subscription
-    const { effect, get, dispose } = scope(store);
+    // Create an effects instance for this subscription
+    const e = effects(store);
 
     // Use a flag to skip the initial run since we already have the value
     let isFirstRun = true;
 
     // Subscribe to atom changes using effect
-    effect([atom], () => {
+    e.effect([atom], () => {
       if (isFirstRun) {
         isFirstRun = false;
         return;
       }
-      setValue(get(atom) as T);
+      setValue(r.atoms.get(atom) as T);
     });
 
     // Cleanup subscription on unmount
-    return dispose;
+    return e.dispose;
   }, [atom, store]);
 
   const updateValue = useCallback((newValue: T | ((prev: T) => T)) => {
     if (typeof newValue === 'function') {
       const updater = newValue as (prev: T) => T;
-      const currentValue = s.get(atom) as T;
-      s.set(atom, updater(currentValue));
+      const currentValue = r.atoms.get(atom) as T;
+      r.atoms.set(atom, updater(currentValue));
     } else {
-      s.set(atom, newValue);
+      r.atoms.set(atom, newValue);
     }
-  }, [atom, s]);
+  }, [atom, r]);
 
   return [value, updateValue];
 }
@@ -179,29 +176,29 @@ export function useAtom<T>(atom: Atom<T>): [T, (value: T | ((prev: T) => T)) => 
  * const count = useAtomValue($count);
  */
 export function useAtomValue<T>(atom: Atom<T>): T {
-  const { store, scope: s } = useStoreInternal();
-  const [value, setValue] = useState<T>(() => s.get(atom) as T);
+  const { store, reactive: r } = useStoreInternal();
+  const [value, setValue] = useState<T>(() => r.atoms.get(atom) as T);
 
   useEffect(() => {
     // Sync state if atom value changed externally
-    setValue(s.get(atom) as T);
+    setValue(r.atoms.get(atom) as T);
 
-    // Create a scope for this subscription
-    const { effect, get, dispose } = scope(store);
+    // Create an effects instance for this subscription
+    const e = effects(store);
 
     // Use a flag to skip the initial run since we already have the value
     let isFirstRun = true;
 
     // Subscribe to atom changes using effect
-    effect([atom], () => {
+    e.effect([atom], () => {
       if (isFirstRun) {
         isFirstRun = false;
         return;
       }
-      setValue(get(atom) as T);
+      setValue(r.atoms.get(atom) as T);
     });
 
-    return dispose;
+    return e.dispose;
   }, [atom, store]);
 
   return value;
@@ -218,17 +215,17 @@ export function useAtomValue<T>(atom: Atom<T>): T {
  * // Component won't re-render when $count changes
  */
 export function useSetAtom<T>(atom: Atom<T>): (value: T | ((prev: T) => T)) => void {
-  const { scope: s } = useStoreInternal();
+  const { reactive: r } = useStoreInternal();
 
   return useCallback((newValue: T | ((prev: T) => T)) => {
     if (typeof newValue === 'function') {
       const updater = newValue as (prev: T) => T;
-      const currentValue = s.get(atom) as T;
-      s.set(atom, updater(currentValue));
+      const currentValue = r.atoms.get(atom) as T;
+      r.atoms.set(atom, updater(currentValue));
     } else {
-      s.set(atom, newValue);
+      r.atoms.set(atom, newValue);
     }
-  }, [atom, s]);
+  }, [atom, r]);
 }
 
 /**
@@ -243,31 +240,56 @@ export function useStore(): Store {
 }
 
 /**
- * React hook to get a scope instance for the current store
- * Creates a scope once and reuses it, disposing on unmount
+ * React hook to get a reactive instance for the current store
+ * Creates a reactive instance once and reuses it, disposing on unmount
  *
  * @example
- * const s = useScope();
- * s.batch(() => {
- *   s.set($count, 10);
- *   s.set($name, 'Alice');
- * });
+ * const { atoms, sets, maps } = useReactive();
+ * atoms.set($count, 10);
+ * sets.add($users, user);
  */
-export function useScope(): Scope {
+export function useReactive(): Reactive {
   const { store } = useStoreInternal();
-  const scopeRef = useRef<Scope | null>(null);
+  const reactiveRef = useRef<Reactive | null>(null);
 
-  if (!scopeRef.current) {
-    scopeRef.current = scope(store);
+  if (!reactiveRef.current) {
+    reactiveRef.current = reactive(store);
   }
 
   useEffect(() => {
     return () => {
-      scopeRef.current?.dispose();
+      reactiveRef.current?.dispose();
     };
   }, []);
 
-  return scopeRef.current;
+  return reactiveRef.current;
+}
+
+/**
+ * React hook to get an effects instance for the current store
+ * Creates an effects instance once and reuses it, disposing on unmount
+ *
+ * @example
+ * const { effect, batch } = useEffects();
+ * effect([$count], () => {
+ *   console.log('count changed');
+ * });
+ */
+export function useEffects(): Effects {
+  const { store } = useStoreInternal();
+  const effectsRef = useRef<Effects | null>(null);
+
+  if (!effectsRef.current) {
+    effectsRef.current = effects(store);
+  }
+
+  useEffect(() => {
+    return () => {
+      effectsRef.current?.dispose();
+    };
+  }, []);
+
+  return effectsRef.current;
 }
 
 /**
@@ -278,120 +300,124 @@ export function useScope(): Scope {
  * @example
  * const batch = useBatch();
  * batch(() => {
- *   s.set($count, 10);
- *   s.set($name, 'Alice');
+ *   atom.set($count, 10);
+ *   atom.set($name, 'Alice');
  * }); // Effects run once at the end
  */
 export function useBatch(): (fn: () => void) => void {
-  const s = useScope();
+  const e = useEffects();
 
   return useCallback((fn: () => void) => {
-    s.batch(fn);
-  }, [s]);
+    e.batch(fn);
+  }, [e]);
 }
 
+// ============================================
+// ECS Component Hooks
+// ============================================
+
 /**
- * Attribute getter/setter tuple returned by useAttribute
+ * Component getter/setter tuple returned by useComponent
  */
-export type UseAttributeResult<T> = [
-  /** Get attribute value for an entity (reads directly from store) */
+export type UseComponentResult<T> = [
+  /** Get component value for an entity (reads directly from store) */
   (entity: Entity) => T | undefined,
-  /** Set attribute value for an entity */
+  /** Set component value for an entity */
   (entity: Entity, value: T) => void,
-  /** Remove attribute value for an entity */
+  /** Remove component value for an entity */
   (entity: Entity) => void
 ];
 
 /**
- * React hook for attribute access with STABLE functions (no re-renders)
+ * React hook for ECS component access with STABLE functions (no re-renders)
  *
  * This hook returns stable getter/setter functions that read/write directly
- * from the store. The component will NOT re-render when attribute values change.
+ * from the store. The component will NOT re-render when component values change.
  *
  * Use this when:
  * - Rendering a list of entities (combine with useAtomValue($entities))
  * - You only need to write values
- * - Child components handle their own subscriptions via useAttributeValue
+ * - Child components handle their own subscriptions via useComponentValue
  *
  * @example
  * function EntityList() {
  *   const entities = useAtomValue($entities); // Re-renders when list changes
- *   const [get, set] = useAttribute($position); // Stable, no re-renders
+ *   const [get, set] = useComponent($position); // Stable, no re-renders
  *
- *   return entities.map(id => (
- *     <EntityItem key={id} id={id} />
+ *   return entities.map(e => (
+ *     <EntityItem key={e.id} entity={e} />
  *   ));
  * }
  *
- * function EntityItem({ id }) {
- *   const pos = useAttributeValue($position, id); // Re-renders when THIS entity changes
+ * function EntityItem({ entity }) {
+ *   const pos = useComponentValue($position, entity); // Re-renders when THIS entity changes
  *   return <div>{pos?.x}, {pos?.y}</div>;
  * }
  */
-export function useAttribute<T>(attr: Attribute<T>): UseAttributeResult<T> {
-  const { scope: s } = useStoreInternal();
+export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
+  const { reactive: r } = useStoreInternal();
 
   // Stable getter - reads directly from store (always fresh value)
   const get = useCallback((entity: Entity): T | undefined => {
-    const map = s.get(attr);
+    const map = r.atoms.get(comp);
     return map?.get(entity);
-  }, [attr, s]);
+  }, [comp, r]);
 
   // Stable setter - mutates WeakMap and notifies
   const set = useCallback((entity: Entity, value: T): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.set(entity, value);
-    s.notify(attr);
-  }, [attr, s]);
+    r.atoms.notify(comp);
+  }, [comp, r]);
 
   // Stable remover
   const remove = useCallback((entity: Entity): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.delete(entity);
-    s.notify(attr);
-  }, [attr, s]);
+    r.atoms.notify(comp);
+  }, [comp, r]);
 
   return [get, set, remove];
 }
 
 /**
- * React hook to read a single entity's attribute value
+ * React hook to read a single entity's component value
  * Only re-renders when the specific entity's value changes
  *
  * @example
- * const playerPos = useAttributeValue($position, 'player');
+ * const playerPos = useComponentValue($position, player);
  * // Only re-renders when player's position changes, not other entities
  *
- * const enemyHealth = useAttributeValue($health, 'enemy1');
+ * const enemyHealth = useComponentValue($health, enemy);
  */
-export function useAttributeValue<T>(
-  attr: Attribute<T>,
+export function useComponentValue<T>(
+  comp: Component<T>,
   entity: Entity
 ): T | undefined {
-  const { store, scope: s } = useStoreInternal();
+  const { store, reactive: r } = useStoreInternal();
   const [value, setValue] = useState<T | undefined>(() => {
-    const map = s.get(attr);
+    const map = r.atoms.get(comp);
     return map?.get(entity);
   });
 
   useEffect(() => {
     // Get initial value
-    const map = s.get(attr);
+    const map = r.atoms.get(comp);
     setValue(map?.get(entity));
 
-    // Create a scope for this subscription
-    const { effect, get, dispose } = scope(store);
+    // Create an effects instance for this subscription
+    const e = effects(store);
 
     // Use a flag to skip the initial run
     let isFirstRun = true;
 
-    // Subscribe to attribute changes using effect
-    effect([attr], () => {
+    // Subscribe to component changes using effect
+    e.effect([comp], () => {
       if (isFirstRun) {
         isFirstRun = false;
         return;
       }
-      const newMap = get(attr);
+      const newMap = r.atoms.get(comp);
       const newValue = newMap?.get(entity);
       setValue((prev) => {
         // Only trigger re-render if value actually changed
@@ -410,37 +436,53 @@ export function useAttributeValue<T>(
       });
     });
 
-    return dispose;
-  }, [attr, entity, store]);
+    return e.dispose;
+  }, [comp, entity, store]);
 
   return value;
 }
 
 /**
- * React hook to get only the setter for an attribute (no re-renders)
+ * React hook to get only the setter for a component (no re-renders)
  * Useful when you only need to update values without reading them
  *
  * @example
- * const [setPosition, removePosition] = useSetAttribute($position);
- * setPosition('player', { x: 10, y: 20 });
- * removePosition('enemy1');
+ * const [setPosition, removePosition] = useSetComponent($position);
+ * setPosition(player, { x: 10, y: 20 });
+ * removePosition(enemy);
  */
-export function useSetAttribute<T>(
-  attr: Attribute<T>
+export function useSetComponent<T>(
+  comp: Component<T>
 ): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
-  const { scope: s } = useStoreInternal();
+  const { reactive: r } = useStoreInternal();
 
   const set = useCallback((entity: Entity, value: T): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.set(entity, value);
-    s.notify(attr);
-  }, [attr, s]);
+    r.atoms.notify(comp);
+  }, [comp, r]);
 
   const remove = useCallback((entity: Entity): void => {
-    const map = s.get(attr)!;
+    const map = r.atoms.get(comp)!;
     map.delete(entity);
-    s.notify(attr);
-  }, [attr, s]);
+    r.atoms.notify(comp);
+  }, [comp, r]);
 
   return [set, remove];
 }
+
+// ============================================
+// Deprecated aliases for backwards compatibility
+// ============================================
+
+/** @deprecated Use UseComponentResult instead */
+export type UseAttributeResult<T> = UseComponentResult<T>;
+
+/** @deprecated Use useComponent instead */
+export const useAttribute = useComponent;
+
+/** @deprecated Use useComponentValue instead */
+export const useAttributeValue = useComponentValue;
+
+/** @deprecated Use useSetComponent instead */
+export const useSetAttribute = useSetComponent;

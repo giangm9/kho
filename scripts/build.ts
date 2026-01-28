@@ -115,7 +115,7 @@ async function build() {
     const { execSync } = await import("child_process");
     const tscFlags =
         "--declaration --emitDeclarationOnly --declarationMap --esModuleInterop --moduleResolution node --target ES2020 --module ESNext --skipLibCheck --rootDir src";
-    execSync(`npx tsc ${tscFlags} --outDir dist src/index.ts src/core/*.ts`, {
+    execSync(`npx tsc ${tscFlags} --outDir dist src/index.ts src/types.ts src/data/*.ts src/system/*.ts`, {
         cwd: process.cwd(),
         stdio: "inherit",
     });
