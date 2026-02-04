@@ -42,6 +42,18 @@ export function effects(store: Store): Effects {
     const cleanups: (() => void)[] = [];
     const listeners: (() => void)[] = [];
 
+    const runEffect = () => {
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+      cleanups.length = 0;
+
+      const cleanup = callback();
+      if (cleanup) {
+        cleanups.push(cleanup);
+      }
+    };
+
     for (const atom of atoms) {
       let instance = atom.instances.get(store);
       if (!instance) {
@@ -61,26 +73,14 @@ export function effects(store: Store): Effects {
         }
       };
 
-      const runEffect = () => {
-        for (const cleanup of cleanups) {
-          cleanup();
-        }
-        cleanups.length = 0;
-
-        const cleanup = callback();
-        if (cleanup) {
-          cleanups.push(cleanup);
-        }
-      };
-
       instance.listeners.add(listener);
       listeners.push(() => {
         instance!.listeners.delete(listener);
       });
-
-      // Initial run
-      runEffect();
     }
+
+    // Initial run (once, not per atom)
+    runEffect();
 
     const unsubscribe = () => {
       for (const removeListener of listeners) {
