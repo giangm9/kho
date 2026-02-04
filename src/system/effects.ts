@@ -29,10 +29,12 @@
 import { Atom, Store, Effects } from "../types"
 import { reactive } from "../data/reactive"
 
+// Shared batch state per store - enables cross-system batching
+const storeBatch = new WeakMap<Store, Set<() => void>>();
+
 export function effects(store: Store): Effects {
   const r = reactive(store);
   const scopeCleanups: (() => void)[] = [];
-  let pendingBatch: Set<() => void> | null = null;
 
   // ============================================
   // Effect system
@@ -65,9 +67,10 @@ export function effects(store: Store): Effects {
       }
 
       const listener = () => {
-        // Check if we're in a batch
-        if (pendingBatch) {
-          pendingBatch.add(runEffect);
+        // Check if we're in a batch (shared across all effects for this store)
+        const pending = storeBatch.get(store);
+        if (pending) {
+          pending.add(runEffect);
         } else {
           runEffect();
         }
@@ -193,16 +196,17 @@ export function effects(store: Store): Effects {
   };
 
   const emit = () => {
-    if (pendingBatch) {
-      for (const listener of pendingBatch) {
+    const pending = storeBatch.get(store);
+    if (pending) {
+      storeBatch.delete(store);
+      for (const listener of pending) {
         listener();
       }
-      pendingBatch = null;
     }
   };
 
   const batch = (callback: () => void) => {
-    pendingBatch = new Set();
+    storeBatch.set(store, new Set());
     callback();
     emit();
   };
