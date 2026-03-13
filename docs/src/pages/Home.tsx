@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { AppLink } from '../router';
 import { CodeBlock } from '../components/CodeBlock';
 import { LuTarget, LuPuzzle, LuShieldCheck, LuFeather, LuZap, LuRadio, LuTimer, LuListTodo, LuGamepad2 } from 'react-icons/lu';
 
@@ -201,12 +201,12 @@ export function Home() {
         </div>
 
         <div className="flex gap-3 justify-center flex-wrap mt-8">
-          <Link to="/getting-started" className="px-6 py-2.5 rounded-lg font-semibold text-sm bg-accent !text-white hover:bg-accent-hover transition-all">
+          <AppLink to="/getting-started" className="px-6 py-2.5 rounded-lg font-semibold text-sm bg-accent !text-white hover:bg-accent-hover transition-all">
             Get Started
-          </Link>
-          <Link to="/examples/todo" className="px-6 py-2.5 rounded-lg font-semibold text-sm border border-border !text-text hover:border-text-muted transition-all">
+          </AppLink>
+          <AppLink to="/examples/todo" className="px-6 py-2.5 rounded-lg font-semibold text-sm border border-border !text-text hover:border-text-muted transition-all">
             Live Examples
-          </Link>
+          </AppLink>
           <a
             href="https://github.com/giangm9/kho"
             className="px-6 py-2.5 rounded-lg font-semibold text-sm border border-border !text-text hover:border-text-muted transition-all"
@@ -334,11 +334,11 @@ export function Home() {
         </p>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4 mt-6">
           {DEMOS.map((d) => (
-            <Link key={d.to} to={d.to} className="block p-5 border border-border rounded-xl bg-bg-card transition-all hover:border-border-bright hover:-translate-y-0.5 no-underline text-inherit">
+            <AppLink key={d.to} to={d.to} className="block p-5 border border-border rounded-xl bg-bg-card transition-all hover:border-border-bright hover:-translate-y-0.5 no-underline text-inherit">
               <span className="text-lg text-cyan block mb-2">{d.icon}</span>
               <h3 className="text-sm font-semibold text-text mb-1">{d.title}</h3>
               <p className="text-xs text-text-muted leading-relaxed">{d.desc}</p>
-            </Link>
+            </AppLink>
           ))}
         </div>
       </section>

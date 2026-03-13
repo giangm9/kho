@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LuBox, LuGithub, LuPackage, LuPanelLeftClose, LuPanelLeftOpen } from 'react-icons/lu';
+import { usePage, AppLink } from '../router';
 
 interface NavChild { to: string; label: string }
 interface NavItem { to: string; label: string; end?: boolean; children?: NavChild[] }
@@ -64,30 +64,8 @@ const NAV: NavSection[] = [
   },
 ];
 
-function HashLink({ to, className, children }: { to: string; className: string; children: React.ReactNode }) {
-  const navigate = useNavigate();
-  const [path, hash] = to.split('#') as [string, string | undefined];
-  return (
-    <a
-      href={to}
-      className={className}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(path);
-        if (hash) {
-          requestAnimationFrame(() => {
-            document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' });
-          });
-        }
-      }}
-    >
-      {children}
-    </a>
-  );
-}
-
-export function Layout() {
-  const { pathname } = useLocation();
+export function Layout({ children }: { children: React.ReactNode }) {
+  const { page } = usePage();
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -99,7 +77,7 @@ export function Layout() {
         }`}
       >
         {/* Logo */}
-        <Link to="/" className="flex items-center gap-2.5 px-4 pt-5 pb-4 !text-text hover:!text-text no-underline">
+        <AppLink to="/" className="flex items-center gap-2.5 px-4 pt-5 pb-4 !text-text hover:!text-text no-underline">
           <LuBox className="text-xl text-accent shrink-0" />
           {!collapsed && (
             <>
@@ -109,7 +87,7 @@ export function Layout() {
               </span>
             </>
           )}
-        </Link>
+        </AppLink>
 
         {/* Nav */}
         {!collapsed && (
@@ -118,26 +96,27 @@ export function Layout() {
               <div key={group.section}>
                 <div className="nav-section-label">{group.section}</div>
                 {group.items.map((item) => {
-                  const isParentActive = pathname === item.to || (item.children && pathname.startsWith(item.to) && !item.end);
+                  const itemPath = item.to.replace(/^\//, '');
+                  const isExact = itemPath === '' ? page === '' : page === itemPath;
+                  const isParentActive = isExact || (!item.end && item.children && page.startsWith(itemPath));
                   return (
                     <div key={item.to}>
-                      <NavLink
+                      <AppLink
                         to={item.to}
-                        end={item.end}
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        className={({ isActive }) => `nav-link ${isActive && (item.end ? isExact : true) ? 'active' : ''}`}
                       >
                         {item.label}
-                      </NavLink>
+                      </AppLink>
                       {item.children && isParentActive && (
                         <div className="mt-0.5 mb-1">
                           {item.children.map((child) => (
-                            <HashLink
+                            <AppLink
                               key={child.to}
                               to={child.to}
                               className="nav-sub-link"
                             >
                               {child.label}
-                            </HashLink>
+                            </AppLink>
                           ))}
                         </div>
                       )}
@@ -176,7 +155,7 @@ export function Layout() {
 
       {/* Main */}
       <main className={`flex-1 px-10 py-8 transition-[margin] duration-200 ${collapsed ? 'ml-14' : 'ml-56'}`}>
-        <Outlet />
+        {children}
       </main>
     </div>
   );

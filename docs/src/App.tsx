@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { usePage } from './router';
 import { Layout } from './components/Layout';
 import { Home } from './pages/Home';
 import { GettingStarted } from './pages/GettingStarted';
@@ -8,18 +8,22 @@ import { ApiReference } from './pages/ApiReference';
 import { TodoApp } from './pages/demos/TodoApp';
 import { SpaceShooter } from './pages/demos/SpaceShooter';
 
+const PAGES: Record<string, React.FC> = {
+  '': Home,
+  'getting-started': GettingStarted,
+  'concepts': CoreConcepts,
+  'examples': Examples,
+  'examples/todo': TodoApp,
+  'examples/space-shooter': SpaceShooter,
+  'api': ApiReference,
+};
+
 export function App() {
+  const { page } = usePage();
+  const Page = PAGES[page] || Home;
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Home />} />
-        <Route path="getting-started" element={<GettingStarted />} />
-        <Route path="concepts" element={<CoreConcepts />} />
-        <Route path="examples" element={<Examples />} />
-        <Route path="examples/todo" element={<TodoApp />} />
-        <Route path="examples/space-shooter" element={<SpaceShooter />} />
-        <Route path="api" element={<ApiReference />} />
-      </Route>
-    </Routes>
+    <Layout>
+      <Page />
+    </Layout>
   );
 }

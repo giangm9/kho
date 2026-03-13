@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { AppLink } from '../router';
 import { LuListTodo, LuGamepad2 } from 'react-icons/lu';
 
 const DEMOS: { icon: ReactNode; title: string; desc: string; to: string; tags: string[] }[] = [
@@ -30,7 +30,7 @@ export function Examples() {
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-5 mt-8">
         {DEMOS.map((d) => (
-          <Link key={d.to} to={d.to} className="block p-5 border border-border rounded-xl bg-bg-card transition-all hover:border-border-bright hover:-translate-y-0.5 no-underline text-inherit">
+          <AppLink key={d.to} to={d.to} className="block p-5 border border-border rounded-xl bg-bg-card transition-all hover:border-border-bright hover:-translate-y-0.5 no-underline text-inherit">
             <span className="text-xl text-cyan block mb-2">{d.icon}</span>
             <h3 className="text-sm font-semibold mb-1.5 text-text">{d.title}</h3>
             <p className="text-xs text-text-muted leading-relaxed">{d.desc}</p>
@@ -44,7 +44,7 @@ export function Examples() {
                 </span>
               ))}
             </div>
-          </Link>
+          </AppLink>
         ))}
       </div>
     </article>
