@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { atom, createStore, reactive, effects, signal, listen, system, ignite, $systems } from 'kho';
-import { KhoProvider, useAtom, useAtomValue, useStore } from 'kho/react';
+import { atom, createStore, reactive, effects, signal, listen, system, ignite, $systems, entities, component, world } from 'kho';
+import type { Entity } from 'kho';
+import { KhoProvider, useAtom, useAtomValue, useStore, useComponentValue, useSetComponent } from 'kho/react';
 import { CodeTabs } from '../../components/CodeTabs';
 import { LuUndo2, LuRedo2, LuHistory, LuPlus, LuCheck, LuX, LuTrash2 } from 'react-icons/lu';
 
@@ -182,6 +183,40 @@ const metadataSystem = system((scope) => {
       atoms.set($categories, cats);
       atoms.set($priorities, pris);
     }
+  });
+});
+
+// ── ECS (Step 7) — kho's built-in Entity-Component-System ──
+// entities() = registry (Set<Entity>), component<T>() = WeakMap<Entity, T>
+// world() = scope factory that provides entity/component operations
+const $todoEntities = entities();
+const $ecsCategory = component<string>();
+const $ecsPriority = component<'low' | 'medium' | 'high'>();
+
+const requestSetEcsCategory = signal<{ id: string; category: string }>();
+const requestSetEcsPriority = signal<{ id: string; priority: 'low' | 'medium' | 'high' }>();
+const requestRemoveEcsEntity = signal<string>();
+
+const ecsSystem = system((scope) => {
+  const w = scope(world($todoEntities));
+  const { on } = scope(listen);
+
+  on(requestSetEcsCategory, (payload) => {
+    const { id, category } = payload!;
+    const e = w.entity(id);
+    if (category) w.set(e, $ecsCategory, category);
+    else w.delete(e, $ecsCategory);
+  });
+
+  on(requestSetEcsPriority, (payload) => {
+    const { id, priority } = payload!;
+    w.set(w.entity(id), $ecsPriority, priority);
+  });
+
+  on(requestRemoveEcsEntity, (id) => {
+    const e = w.entity(id!);
+    w.remove(e);
+    // WeakMap auto-cleans component data when entity ref is GC'd
   });
 });
 
@@ -733,6 +768,152 @@ function Step6Demo() {
   );
 }
 
+function EcsTodoItem({ entity }: { entity: Entity }) {
+  const todos = useAtomValue($todos);
+  const cat = useComponentValue($ecsCategory, entity);
+  const prio = useComponentValue($ecsPriority, entity);
+  const [setCat] = useSetComponent($ecsCategory);
+  const [setPrio] = useSetComponent($ecsPriority);
+  const emit = useEmit();
+
+  const todo = todos.find(t => String(t.id) === entity.id);
+  if (!todo) return null;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+    }}>
+      {/* Priority */}
+      <select
+        value={prio ?? ''}
+        onChange={e => {
+          const val = e.target.value as 'low' | 'medium' | 'high';
+          if (val) setPrio(entity, val);
+        }}
+        style={{
+          fontSize: 10, padding: '2px 2px', borderRadius: 4, width: 28,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-bg-code)',
+          color: prio ? (PRIO_COLORS[prio] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
+          cursor: 'pointer', flexShrink: 0,
+        }}
+      >
+        <option value="">—</option>
+        {PRIORITIES.map(p => (
+          <option key={p} value={p}>{p === 'low' ? '🟢' : p === 'medium' ? '🟡' : '🔴'}</option>
+        ))}
+      </select>
+      {/* Toggle */}
+      <button
+        onClick={() => emit(requestToggle, todo.id)}
+        style={{
+          flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+          border: todo.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
+          background: todo.done ? 'var(--color-accent)' : 'transparent',
+          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', padding: 0,
+        }}
+      >
+        {todo.done && <LuCheck style={{ fontSize: 10 }} />}
+      </button>
+      {/* Text */}
+      <span style={{
+        flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        textDecoration: todo.done ? 'line-through' : 'none',
+        color: todo.done ? 'var(--color-text-dim)' : 'var(--color-text)',
+      }}>
+        {todo.text}
+      </span>
+      {/* Category */}
+      <select
+        value={cat ?? ''}
+        onChange={e => setCat(entity, e.target.value)}
+        style={{
+          fontSize: 10, padding: '2px 4px', borderRadius: 4,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-bg-code)',
+          color: cat ? (CAT_COLORS[cat] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
+          cursor: 'pointer', flexShrink: 0,
+        }}
+      >
+        <option value="">no tag</option>
+        {CATEGORIES.map(c => (
+          <option key={c} value={c}>{c}</option>
+        ))}
+      </select>
+      {/* Remove */}
+      <button
+        onClick={() => {
+          emit(requestRemove, todo.id);
+          emit(requestRemoveEcsEntity, String(todo.id));
+        }}
+        style={{
+          flexShrink: 0, background: 'none', border: 'none', padding: 2,
+          color: 'var(--color-text-dim)', cursor: 'pointer',
+        }}
+      >
+        <LuX style={{ fontSize: 12 }} />
+      </button>
+    </div>
+  );
+}
+
+function EcsEnrichedTodoList() {
+  const todoEntities = useAtomValue($todoEntities);
+  const todos = useAtomValue($todos);
+  const entityArray = Array.from(todoEntities);
+
+  if (todos.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '20px 0', fontSize: 12, color: 'var(--color-text-dim)' }}>
+        No todos yet. Add one above!
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ borderRadius: 8, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
+      {entityArray.map((e, i) => (
+        <div key={e.id} style={{ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>
+          <EcsTodoItem entity={e} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Step7Demo() {
+  const store = useMemo(() => createStore(), []);
+  useEffect(() => {
+    const r = reactive(store);
+    // Set up todos
+    r.atoms.set($todos, [
+      { id: 1, text: 'Ship feature', done: false },
+      { id: 2, text: 'Buy groceries', done: true },
+      { id: 3, text: 'Morning run', done: false },
+    ]);
+    // Register systems
+    r.sets.add($systems, todoSystem);
+    r.sets.add($systems, ecsSystem);
+    const dispose = ignite(store);
+    // Populate entities & components via world
+    const w = world($todoEntities)(store);
+    const e1 = w.entity('1'); w.add(e1); w.set(e1, $ecsCategory, 'work'); w.set(e1, $ecsPriority, 'high');
+    const e2 = w.entity('2'); w.add(e2); w.set(e2, $ecsCategory, 'errands');
+    const e3 = w.entity('3'); w.add(e3); w.set(e3, $ecsCategory, 'personal'); w.set(e3, $ecsPriority, 'medium');
+    return () => { w.dispose(); dispose(); r.dispose(); };
+  }, [store]);
+
+  return (
+    <KhoProvider store={store}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <TodoInput />
+        <EcsEnrichedTodoList />
+      </div>
+    </KhoProvider>
+  );
+}
+
 function StepRow({ children, demo, label }: { children: React.ReactNode; demo: React.ReactNode; label: string }) {
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
@@ -1152,6 +1333,106 @@ function EnrichedTodoItem({ todo }: { todo: Todo }) {
 // categories/priorities simply read as empty Maps.
 // No errors, no crashes — the UI gracefully degrades.`;
 
+const STEP7_CODE = `import {
+  entities, component, world, // ← ECS primitives
+  signal, system, listen,
+} from 'kho';
+
+// ── Entity registry ──
+// A Set<Entity> atom — tracks which entities exist.
+const $todoEntities = entities();
+
+// ── Components (one-liner each!) ──
+// Each component() creates a WeakMap<Entity, T> atom.
+// When an entity is removed and its ref is GC'd,
+// all WeakMap entries for it are freed automatically.
+const $category = component<string>();
+const $priority = component<'low' | 'medium' | 'high'>();
+// const $dueDate  = component<Date>();      ← just add more
+// const $assignee = component<string>();    ← no other changes
+
+const requestSetCategory = signal<{ id: string; category: string }>();
+const requestSetPriority = signal<{
+  id: string; priority: 'low' | 'medium' | 'high'
+}>();
+const requestRemoveEntity = signal<string>();
+
+// ── ECS System ──
+// scope(world($todoEntities)) gives you a World accessor
+// bound to this system's lifecycle. Auto-disposes on shutdown.
+const ecsSystem = system((scope) => {
+  const w  = scope(world($todoEntities));
+  const { on } = scope(listen);
+
+  on(requestSetCategory, ({ id, category }) => {
+    const e = w.entity(id);
+    if (category) w.set(e, $category, category);
+    else w.delete(e, $category);
+  });
+
+  on(requestSetPriority, ({ id, priority }) => {
+    w.set(w.entity(id), $priority, priority);
+  });
+
+  on(requestRemoveEntity, (id) => {
+    w.remove(w.entity(id));
+    // That's it. No cleanup loops.
+    // WeakMap GC frees $category + $priority data.
+  });
+});
+
+// Register alongside todoSystem
+sets.add($systems, ecsSystem);`;
+
+const STEP7_UI = `import { useComponentValue, useSetComponent, useAtomValue } from 'kho/react';
+
+// Each item subscribes to its OWN entity's component values.
+// Only re-renders when THIS entity's data changes — not all entities.
+function EcsTodoItem({ entity }: { entity: Entity }) {
+  const cat  = useComponentValue($category, entity);
+  const prio = useComponentValue($priority, entity);
+  const [setCat]  = useSetComponent($category);
+  const [setPrio] = useSetComponent($priority);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <select value={prio ?? ''}
+        onChange={e => setPrio(entity, e.target.value)}>
+        <option value="">—</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+      </select>
+      <span>{todo.text}</span>
+      <select value={cat ?? ''}
+        onChange={e => setCat(entity, e.target.value)}>
+        <option value="">no tag</option>
+        <option value="work">work</option>
+        <option value="personal">personal</option>
+        <option value="errands">errands</option>
+      </select>
+    </div>
+  );
+}
+
+// The list renders one EcsTodoItem per entity.
+// useAtomValue($todoEntities) re-renders when entities are added/removed.
+function EcsTodoList() {
+  const todoEntities = useAtomValue($todoEntities);
+  return (
+    <div>
+      {Array.from(todoEntities).map(e => (
+        <EcsTodoItem key={e.id} entity={e} />
+      ))}
+    </div>
+  );
+}
+
+// Step 6 vs Step 7:
+//   Step 6: useAtomValue($categories)      — reads ALL Map entries
+//   Step 7: useComponentValue($cat, entity) — reads ONE entity
+// Per-entity subscriptions = surgical re-renders.`;
+
 // ============================================
 // Cumulative file tabs per step
 // ============================================
@@ -1187,6 +1468,12 @@ const STEP6_FILES = [
   { label: 'EnrichedUI.tsx', code: STEP6_UI, lang: 'tsx' },
 ];
 
+const STEP7_FILES = [
+  ...STEP5_FILES,
+  { label: 'ecs.ts', code: STEP7_CODE, lang: 'typescript' },
+  { label: 'EnrichedUI.tsx', code: STEP7_UI, lang: 'tsx' },
+];
+
 // ============================================
 // Page Export
 // ============================================
@@ -1209,6 +1496,7 @@ export function TodoApp() {
           <li><a href="#step-4">Persist to localStorage</a></li>
           <li><a href="#step-5">Generic persistence factory</a></li>
           <li><a href="#step-6">Extend without modifying — Component pattern</a></li>
+          <li><a href="#step-7">Full ECS — WeakMap &amp; auto GC</a></li>
         </ol>
       </nav>
 
@@ -1351,6 +1639,96 @@ export function TodoApp() {
         </blockquote>
       </StepRow>
 
+      {/* ── Step 7 ── */}
+      <h2 id="step-7">Step 7 — Full ECS with WeakMap</h2>
+      <StepRow label="Step 7 · ECS" demo={<Step7Demo />}>
+        <p>
+          Step 6 used raw <code>Map&lt;number, T&gt;</code> atoms — each component needed its own
+          cleanup loop. Kho ships a built-in <strong>Entity-Component-System</strong> that
+          replaces all of that with three primitives:
+        </p>
+        <ul>
+          <li><code>entities()</code> — a <code>Set&lt;Entity&gt;</code> registry atom</li>
+          <li><code>component&lt;T&gt;()</code> — a <code>WeakMap&lt;Entity, T&gt;</code> atom per property</li>
+          <li><code>world($entities)</code> — a <strong>scope factory</strong> that provides <code>entity()</code>,
+            <code>add()</code>, <code>remove()</code>, <code>get()</code>, <code>set()</code>,
+            <code>with()</code>, <code>without()</code>
+          </li>
+        </ul>
+        <CodeTabs tabs={STEP7_FILES} defaultActive={5} />
+
+        <h3>Why <code>system()</code> + <code>scope()</code>?</h3>
+        <p>
+          The <code>system()</code> wrapper turns a function into a managed lifecycle unit.
+          Inside it, <code>scope()</code> is how you request capabilities:
+        </p>
+        <ul>
+          <li><code>scope(reactive)</code> → gives you <code>atoms.get/set</code></li>
+          <li><code>scope(effects)</code> → gives you <code>effect()</code>, <code>compute()</code></li>
+          <li><code>scope(listen)</code> → gives you <code>on()</code> for signals</li>
+          <li><code>scope(world($entities))</code> → gives you a <code>World</code> accessor</li>
+        </ul>
+        <p>
+          Every resource acquired via <code>scope()</code> is <strong>auto-disposed</strong> when the
+          system is removed from <code>$systems</code>. No manual cleanup. Remove the system →
+          effects stop, signal handlers unsubscribe, world accessor is released.
+          This is why <code>scope()</code> exists: lifecycle-bound resource management.
+        </p>
+
+        <h3>Why WeakMap?</h3>
+        <p>
+          Each <code>component&lt;T&gt;()</code> stores data in a <code>WeakMap&lt;Entity, T&gt;</code>.
+          When you call <code>w.remove(entity)</code>, the entity ref leaves the registry.
+          Once no code holds a reference to that entity object, the JS garbage collector
+          frees all WeakMap entries automatically — across every component. Zero cleanup loops.
+        </p>
+
+        <h3>Step 6 vs Step 7</h3>
+        <table>
+          <thead>
+            <tr><th></th><th>Step 6 (raw Map)</th><th>Step 7 (kho ECS)</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Component storage</td>
+              <td><code>atom&lt;Map&lt;number, T&gt;&gt;</code></td>
+              <td><code>component&lt;T&gt;()</code> → <code>WeakMap&lt;Entity, T&gt;</code></td>
+            </tr>
+            <tr>
+              <td>Adding a component</td>
+              <td>New atom + cleanup loop</td>
+              <td><code>const $x = component&lt;T&gt;()</code></td>
+            </tr>
+            <tr>
+              <td>Entity operations</td>
+              <td>Manual Map reads/writes</td>
+              <td><code>w.get(e, $x)</code>, <code>w.set(e, $x, v)</code></td>
+            </tr>
+            <tr>
+              <td>Cleanup on delete</td>
+              <td>Manual loop per Map</td>
+              <td><code>w.remove(e)</code> → WeakMap GC</td>
+            </tr>
+            <tr>
+              <td>Query entities</td>
+              <td>Filter arrays manually</td>
+              <td><code>w.with($position, $health)</code></td>
+            </tr>
+            <tr>
+              <td>React subscription</td>
+              <td><code>useAtomValue($map)</code> — re-renders on any change</td>
+              <td><code>useComponentValue($comp, entity)</code> — per-entity</td>
+            </tr>
+          </tbody>
+        </table>
+        <blockquote>
+          <strong>Pattern:</strong> <code>entities()</code> + <code>component()</code> + <code>world()</code> = kho's
+          built-in ECS. Entities are string IDs, components are <code>WeakMap</code> atoms,
+          systems use <code>scope(world(...))</code> for lifecycle-bound access.
+          Adding a new property is always a one-liner — and cleanup is free.
+        </blockquote>
+      </StepRow>
+
       {/* ── Recap ── */}
       <h2>Architecture Recap</h2>
       <table>
@@ -1374,8 +1752,13 @@ export function TodoApp() {
           </tr>
           <tr>
             <td><code>metadataSystem</code></td>
-            <td>Category, priority, …</td>
+            <td>Category, priority (raw Maps)</td>
             <td>Reads <code>$todos</code> ids, owns component Maps</td>
+          </tr>
+          <tr>
+            <td><code>ecsSystem</code></td>
+            <td>Category, priority (built-in ECS)</td>
+            <td><code>scope(world(...))</code>, WeakMap components, auto-GC</td>
           </tr>
           <tr>
             <td><code>persistAtom</code></td>
