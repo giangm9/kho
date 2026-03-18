@@ -48,7 +48,7 @@ export function AppLink({
   ...rest
 }: { to: string; className?: string | ((props: { isActive: boolean }) => string); children: ReactNode } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'className'>) {
   const { page, navigate } = usePage();
-  const [path] = to.split('#');
+  const path = to.split('#')[0] ?? '';
   const isActive = path === '/' ? page === '' : page === path.replace(/^\//, '');
   const base = import.meta.env.BASE_URL;
   const href = path ? `${base}?p=${encodeURIComponent(path.replace(/^\//, ''))}` : base;
