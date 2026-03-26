@@ -135,9 +135,14 @@ export function entities(): Atom<Set<Entity>> {
  * });
  */
 export function world($entities: Atom<Set<Entity>>): (store: Store) => World {
+  // Entity cache is store-scoped (not per-closure) so all World instances
+  // for the same $entities + store share the same Entity object references.
+  // This is critical because Set.has() and WeakMap use reference equality.
+  const $entityCache = atomWithFactory<Map<EntityId, Entity>>(() => new Map());
+
   return (store: Store): World => {
     const r = reactive(store);
-    const entityCache = new Map<EntityId, Entity>();
+    const entityCache = r.atoms.get($entityCache)!;
 
     return {
       entity(id: EntityId): Entity {
