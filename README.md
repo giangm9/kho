@@ -292,77 +292,71 @@ dispose();  // All cleanup handled automatically
 
 ## ECS (Entity Component System)
 
-For game development and similar use cases:
+For game development and similar use cases. See [full ECS documentation](docs/ecs.md).
 
 ```typescript
-import { component, componentWithFactory, entities, world, system, effects } from 'kho';
+import { world, component, query, system, effects } from 'kho';
 
-// Define components (data columns)
-const $position = component<{ x: number; y: number }>();
-const $velocity = component<{ vx: number; vy: number }>();
-const $health = component<number>();
-const $inventory = componentWithFactory(() => []);  // With default
-
-// Create entity registry
-const $players = entities();
+// Define entity registry + components
+const $units = world();
+const $position = component($units, { x: 0, y: 0 });
+const $velocity = component($units, { vx: 0, vy: 0 });
+const $health = component($units, 100);
 
 // Game system
 const gameSystem = system((scope) => {
   const { interval } = scope(effects);
-  const entityWorld = scope(world($players));
+  const { add, set, get, select, remove } = scope(query($units));
 
-  // Create entities
-  const player = entityWorld.entity('player-1');
-  const enemy = entityWorld.entity('enemy-1');
+  // Add entities (string IDs)
+  add('player-1');
+  set('player-1', $position, { x: 0, y: 0 });
+  set('player-1', $velocity, { vx: 1, vy: 0 });
+  set('player-1', $health, 100);
 
-  // Add to world
-  entityWorld.add(player);
-  entityWorld.set(player, $position, { x: 0, y: 0 });
-  entityWorld.set(player, $velocity, { vx: 1, vy: 0 });
-  entityWorld.set(player, $health, 100);
-
-  entityWorld.add(enemy);
-  entityWorld.set(enemy, $position, { x: 100, y: 50 });
-  entityWorld.set(enemy, $health, 50);
+  add('enemy-1');
+  set('enemy-1', $position, { x: 100, y: 50 });
+  set('enemy-1', $health, 50);
 
   // Game loop
   interval(16, () => {
-    // Update all entities with position and velocity
-    for (const entity of entityWorld.with($position, $velocity)) {
-      const pos = entityWorld.get(entity, $position)!;
-      const vel = entityWorld.get(entity, $velocity)!;
-      entityWorld.set(entity, $position, {
+    for (const id of select($position, $velocity)) {
+      const pos = get(id, $position)!;
+      const vel = get(id, $velocity)!;
+      set(id, $position, {
         x: pos.x + vel.vx,
         y: pos.y + vel.vy,
       });
     }
   });
+
+  // Cleanup: removes entity + all component data (batched)
+  remove('enemy-1');
 });
 ```
 
 ### World API
 
 ```typescript
-const entityWorld = scope(world($entities));
+const w = scope(query($units));
 
 // Entity lifecycle
-entityWorld.entity(id)              // Get/create entity by ID (cached)
-entityWorld.add(entity)             // Add to registry
-entityWorld.remove(entity)          // Remove from registry
-entityWorld.has(entity)             // Check existence
-entityWorld.all()                   // Get all entities
+w.add(id)                    // Add entity
+w.remove(id)                 // Remove entity + cleanup all components
+w.has(id)                    // Entity exists?
+w.has(id, $comp)             // Entity has component?
+w.all()                      // All entity IDs
 
 // Component operations
-entityWorld.get(entity, $comp)      // Get value (undefined if not set)
-entityWorld.set(entity, $comp, val) // Set value
-entityWorld.delete(entity, $comp)   // Remove component
-entityWorld.hasComp(entity, $comp)  // Check if entity has component
+w.get(id, $comp)             // Get value (or default)
+w.set(id, $comp, value)      // Set value
+w.delete(id, $comp)          // Remove component from entity
 
 // Queries
-entityWorld.with($a, $b)            // Entities with ALL components
-entityWorld.without($a)             // Entities without component
+w.select($a, $b)             // Entities with ALL components
+w.exclude($a)                // Entities WITHOUT components
 
-entityWorld.dispose()               // Cleanup
+w.dispose()                  // Cleanup
 ```
 
 ## System Orchestration
@@ -487,10 +481,10 @@ const dragSystem = system((scope) => {
 
 | Function | Description |
 |----------|-------------|
-| `component()` | Create component type |
-| `componentWithFactory(fn)` | Component with default factory |
-| `entities()` | Create entity registry |
-| `world($entities)` | Create world factory |
+| `world()` | Create entity registry (Entities) |
+| `component(entities, default?)` | Create component bound to registry |
+| `componentWithFactory(entities, fn)` | Component with default factory |
+| `query(entities)` | Create World factory for scope() |
 
 ### Attributes
 

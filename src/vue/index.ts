@@ -6,7 +6,7 @@
 import { inject, provide, onUnmounted, readonly, shallowRef } from 'vue';
 import type { Ref, InjectionKey } from 'vue';
 import type { Atom, Store, System, Reactive, Effects } from '../types';
-import type { Component, Entity } from '../data/entity';
+import type { Component } from '../data/entity';
 import { createStore } from '../data/store';
 import { reactive } from '../data/reactive';
 import { effects } from '../system/effects';
@@ -263,9 +263,9 @@ export function useBatch(): (fn: () => void) => void {
  * Component getter/setter tuple returned by useComponent
  */
 export type UseComponentResult<T> = [
-  (entity: Entity) => T | undefined,
-  (entity: Entity, value: T) => void,
-  (entity: Entity) => void
+  (entity: string) => T | undefined,
+  (entity: string, value: T) => void,
+  (entity: string) => void
 ];
 
 /**
@@ -274,24 +274,24 @@ export type UseComponentResult<T> = [
  *
  * @example
  * const [getPosition, setPosition, removePosition] = useComponent($position);
- * const pos = getPosition(player);
- * setPosition(player, { x: 10, y: 20 });
+ * const pos = getPosition('player-1');
+ * setPosition('player-1', { x: 10, y: 20 });
  */
 export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
   const { reactive: r } = useStoreInternal();
 
-  const get = (entity: Entity): T | undefined => {
+  const get = (entity: string): T | undefined => {
     const map = r.atoms.get(comp);
     return map?.get(entity);
   };
 
-  const set = (entity: Entity, value: T): void => {
+  const set = (entity: string, value: T): void => {
     const map = r.atoms.get(comp)!;
     map.set(entity, value);
     r.atoms.notify(comp);
   };
 
-  const remove = (entity: Entity): void => {
+  const remove = (entity: string): void => {
     const map = r.atoms.get(comp)!;
     map.delete(entity);
     r.atoms.notify(comp);
@@ -305,24 +305,19 @@ export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
  * Returns a reactive ref that updates when the specific entity changes
  *
  * @example
- * const playerPos = useComponentValue($position, player);
- * // playerPos.value updates only when player's position changes
+ * const playerPos = useComponentValue($position, 'player-1');
  */
 export function useComponentValue<T>(
   comp: Component<T>,
-  entity: Entity
+  entity: string
 ): Readonly<Ref<T | undefined>> {
   const { store, reactive: r } = useStoreInternal();
   const initialMap = r.atoms.get(comp);
   const value = shallowRef<T | undefined>(initialMap?.get(entity));
 
-  // Create an effects instance for this subscription
   const e = effects(store);
-
-  // Use a flag to skip the initial run
   let isFirstRun = true;
 
-  // Subscribe to component changes using effect
   e.effect([comp], () => {
     if (isFirstRun) {
       isFirstRun = false;
@@ -330,9 +325,7 @@ export function useComponentValue<T>(
     }
     const newMap = r.atoms.get(comp);
     const newValue = newMap?.get(entity);
-    // Only update if value changed (shallow comparison)
     if (value.value !== newValue) {
-      // Deep comparison for objects
       if (
         typeof value.value === 'object' &&
         typeof newValue === 'object' &&
@@ -346,7 +339,6 @@ export function useComponentValue<T>(
     }
   });
 
-  // Cleanup on component unmount
   onUnmounted(e.dispose);
 
   return readonly(value) as Readonly<Ref<T | undefined>>;
@@ -357,20 +349,20 @@ export function useComponentValue<T>(
  *
  * @example
  * const [setPosition, removePosition] = useSetComponent($position);
- * setPosition(player, { x: 10, y: 20 });
+ * setPosition('player-1', { x: 10, y: 20 });
  */
 export function useSetComponent<T>(
   comp: Component<T>
-): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
+): [(entity: string, value: T) => void, (entity: string) => void] {
   const { reactive: r } = useStoreInternal();
 
-  const set = (entity: Entity, value: T): void => {
+  const set = (entity: string, value: T): void => {
     const map = r.atoms.get(comp)!;
     map.set(entity, value);
     r.atoms.notify(comp);
   };
 
-  const remove = (entity: Entity): void => {
+  const remove = (entity: string): void => {
     const map = r.atoms.get(comp)!;
     map.delete(entity);
     r.atoms.notify(comp);
@@ -378,19 +370,3 @@ export function useSetComponent<T>(
 
   return [set, remove];
 }
-
-// ============================================
-// Deprecated aliases for backwards compatibility
-// ============================================
-
-/** @deprecated Use UseComponentResult instead */
-export type UseAttributeResult<T> = UseComponentResult<T>;
-
-/** @deprecated Use useComponent instead */
-export const useAttribute = useComponent;
-
-/** @deprecated Use useComponentValue instead */
-export const useAttributeValue = useComponentValue;
-
-/** @deprecated Use useSetComponent instead */
-export const useSetAttribute = useSetComponent;

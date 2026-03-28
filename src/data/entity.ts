@@ -1,211 +1,283 @@
-/**
- * Entity Component System (ECS)
- *
- * ECS pattern for game development and similar use cases.
- * Uses Entity as key type with string-based IDs and caching.
- *
- * @example
- * const $players = entities();
- * const $position = component<{ x: number; y: number }>();
- * const $health = component<number>();
- *
- * const gameSystem = system((scope) => {
- *   const w = scope(world($players));
- *
- *   const player = w.entity('player');
- *   w.add(player);
- *   w.set(player, $position, { x: 0, y: 0 });
- *   w.set(player, $health, 100);
- * });
- */
-
 import { atomWithFactory } from './atom';
 import type { Atom, Store } from '../types';
 import { reactive } from './reactive';
+import { effects } from '../system/effects';
 
 // ============================================
 // Types
 // ============================================
 
 export type EntityId = string;
+export type Entity = string;
 
-/** Entity - object reference for WeakMap auto-cleanup */
-export type Entity = { readonly id: EntityId };
+/**
+ * Entities — entity registry + component registry
+ * Created by world(), used by query() and component()
+ */
+export type Entities = {
+  readonly $entities: Atom<Set<string>>;
+  readonly _components: Set<Component<any>>;
+};
 
-/** Component - Atom storing WeakMap<Entity, T> for auto-cleanup */
-export type Component<T> = Atom<WeakMap<Entity, T>> & {
+/**
+ * Component — Atom<Map<string, T>> bound to an Entities registry
+ */
+export type Component<T> = Atom<Map<string, T>> & {
+  readonly _entities: Entities;
   defaultFactory?: () => T;
 };
 
-/** @deprecated Use Component instead */
-export type Attribute<T> = Component<T>;
-
-/** @deprecated Use Component instead */
-export type AttributeAtom<T> = Component<T>;
-
-/** World accessor - entity operations bound to a store */
+/**
+ * World — operational interface for entity/component operations
+ * Returned by query(entities)(store)
+ */
 export type World = {
-  entity(id: EntityId): Entity;
-  add(entity: Entity): void;
-  remove(entity: Entity): void;
-  has(entity: Entity): boolean;
-  all(): Entity[];
-  get<T>(entity: Entity, comp: Component<T>): T | undefined;
-  set<T>(entity: Entity, comp: Component<T>, value: T): void;
-  delete<T>(entity: Entity, comp: Component<T>): void;
-  hasComp<T>(entity: Entity, comp: Component<T>): boolean;
-  with(...comps: Component<any>[]): Entity[];
-  without(...comps: Component<any>[]): Entity[];
+  add(id: string): void;
+  remove(id: string): void;
+  has(id: string): boolean;
+  has<T>(id: string, comp: Component<T>): boolean;
+  all(): string[];
+  get<T>(id: string, comp: Component<T>): T | undefined;
+  set<T>(id: string, comp: Component<T>, value: T): void;
+  delete<T>(id: string, comp: Component<T>): void;
+  select(...comps: Component<any>[]): string[];
+  exclude(...comps: Component<any>[]): string[];
   dispose(): void;
 };
 
 // ============================================
-// Component Creators
+// Factories
 // ============================================
 
 /**
- * Create a component (data column for entities)
- * Uses WeakMap for automatic cleanup when entity is GC'd
+ * Create an entity registry (Entities)
  *
  * @example
- * const $position = component<{ x: number; y: number }>();
- * const $health = component<number>();
+ * const $units = world();
+ * const $position = component($units, { x: 0, y: 0 });
+ * const $health = component($units, 100);
  */
-export function component<T>(): Component<T> {
-  return atomWithFactory<WeakMap<Entity, T>>(() => new WeakMap()) as Component<T>;
+export function world(): Entities {
+  const $entities = atomWithFactory(() => new Set<string>());
+  const _components = new Set<Component<any>>();
+  return { $entities, _components };
 }
 
 /**
- * Create a component with a default factory
- * Each entity gets a fresh value from the factory when accessed
+ * Create a component bound to an Entities registry
  *
  * @example
- * const $position = componentWithFactory(() => ({ x: 0, y: 0 }));
- * const $health = componentWithFactory(() => 100);
+ * const $units = world();
+ * const $position = component($units, { x: 0, y: 0 });
+ * const $health = component($units, 100);
  */
-export function componentWithFactory<T>(defaultFactory: () => T): Component<T> {
-  const comp = atomWithFactory<WeakMap<Entity, T>>(() => new WeakMap()) as Component<T>;
-  comp.defaultFactory = defaultFactory;
+export function component<T>(entities: Entities, defaultValue?: T): Component<T> {
+  const comp = atomWithFactory(() => new Map<string, T>()) as Component<T>;
+  (comp as any)._entities = entities;
+  if (defaultValue !== undefined) {
+    comp.defaultFactory = () => defaultValue;
+  }
+  entities._components.add(comp);
   return comp;
 }
 
-/** @deprecated Use component() instead */
-export const attribute = component;
-
-/** @deprecated Use componentWithFactory() instead */
-export const attributeWithFactory = componentWithFactory;
-
-// ============================================
-// Entity Registry
-// ============================================
-
 /**
- * Create an entities atom (entity registry)
+ * Create a component with a factory function
+ * Each entity gets a fresh value from the factory
  *
  * @example
- * const $players = entities();
- * const $enemies = entities();
+ * const $inventory = componentWithFactory($units, () => []);
+ * const $stats = componentWithFactory($units, () => ({ hp: 100, mp: 50 }));
  */
-export function entities(): Atom<Set<Entity>> {
-  return atomWithFactory<Set<Entity>>(() => new Set());
+export function componentWithFactory<T>(entities: Entities, factory: () => T): Component<T> {
+  const comp = atomWithFactory(() => new Map<string, T>()) as Component<T>;
+  (comp as any)._entities = entities;
+  comp.defaultFactory = factory;
+  entities._components.add(comp);
+  return comp;
 }
 
 // ============================================
-// World Scope
+// Query — World factory
 // ============================================
 
 /**
- * Create a world factory for entity operations
- * Returns a factory compatible with scope()
+ * Create a World factory for an Entities registry
+ * Returns (store) => World, compatible with scope()
  *
  * @example
- * const $players = entities();
- * const $position = component<{ x: number; y: number }>();
- * const $health = component<number>();
+ * const $units = world();
+ * const $position = component($units, { x: 0, y: 0 });
  *
  * const gameSystem = system((scope) => {
- *   const w = scope(world($players));
+ *   const { add, set, select } = scope(query($units));
  *
- *   const player = w.entity('player');
- *   w.add(player);
- *   w.set(player, $position, { x: 0, y: 0 });
- *   w.set(player, $health, 100);
+ *   add('player-1');
+ *   set('player-1', $position, { x: 10, y: 20 });
  *
- *   console.log(w.get(player, $position));  // { x: 0, y: 0 }
+ *   for (const id of select($position)) {
+ *     const pos = get(id, $position);
+ *   }
  * });
  */
-export function world($entities: Atom<Set<Entity>>): (store: Store) => World {
-  // Entity cache is store-scoped (not per-closure) so all World instances
-  // for the same $entities + store share the same Entity object references.
-  // This is critical because Set.has() and WeakMap use reference equality.
-  const $entityCache = atomWithFactory<Map<EntityId, Entity>>(() => new Map());
+export function query(entities: Entities): (store: Store) => World {
+  const { $entities, _components } = entities;
 
   return (store: Store): World => {
     const r = reactive(store);
-    const entityCache = r.atoms.get($entityCache)!;
+    const e = effects(store);
+
+    // Cache: component → Map (avoids repeated WeakMap lookups)
+    const mapCache = new WeakMap<Component<any>, Map<string, any>>();
+    const getMap = <T>(comp: Component<T>): Map<string, T> => {
+      let map = mapCache.get(comp);
+      if (!map) {
+        map = r.atoms.get(comp)!;
+        mapCache.set(comp, map);
+      }
+      return map as Map<string, T>;
+    };
+
+    // Query cache: serialized comp key → result
+    // Invalidated on any add/remove/set/delete
+    let queryCache = new Map<string, string[]>();
+    let queryCacheValid = true;
+
+    const invalidateQueryCache = () => {
+      if (queryCacheValid) {
+        queryCacheValid = false;
+        queryCache.clear();
+      }
+    };
+
+    // Comp key for query cache (use object identity via index)
+    const compKeys = new WeakMap<Component<any>, number>();
+    let compKeyCounter = 0;
+    const getCompKey = (comp: Component<any>): number => {
+      let key = compKeys.get(comp);
+      if (key === undefined) {
+        key = compKeyCounter++;
+        compKeys.set(comp, key);
+      }
+      return key;
+    };
+
+    const makeCacheKey = (prefix: string, comps: Component<any>[]): string => {
+      return prefix + comps.map(c => getCompKey(c)).sort().join(',');
+    };
 
     return {
-      entity(id: EntityId): Entity {
-        let e = entityCache.get(id);
-        if (!e) {
-          e = { id };
-          entityCache.set(id, e);
-        }
-        return e;
+      add(id) {
+        r.sets.add($entities, id);
+        invalidateQueryCache();
       },
 
-      add(entity: Entity): void {
-        r.sets.add($entities, entity);
+      remove(id) {
+        e.batch(() => {
+          for (const comp of _components) {
+            const map = getMap(comp);
+            if (map.has(id)) {
+              map.delete(id);
+              r.atoms.notify(comp);
+            }
+          }
+          r.sets.remove($entities, id);
+        });
+        invalidateQueryCache();
       },
 
-      remove(entity: Entity): void {
-        r.sets.remove($entities, entity);
+      has(id: string, comp?: Component<any>): boolean {
+        if (comp) return getMap(comp).has(id);
+        return r.sets.has($entities, id);
       },
 
-      has(entity: Entity): boolean {
-        return r.sets.has($entities, entity);
-      },
-
-      all(): Entity[] {
+      all() {
         return r.sets.values($entities);
       },
 
-      get<T>(entity: Entity, comp: Component<T>): T | undefined {
-        const value = r.atoms.get(comp)!.get(entity);
-        return value !== undefined ? value : comp.defaultFactory?.();
+      get(id, comp) {
+        const val = getMap(comp).get(id);
+        return val !== undefined ? val : comp.defaultFactory?.();
       },
 
-      set<T>(entity: Entity, comp: Component<T>, value: T): void {
-        const map = r.atoms.get(comp)!;
-        map.set(entity, value);
+      set(id, comp, value) {
+        getMap(comp).set(id, value);
         r.atoms.notify(comp);
+        invalidateQueryCache();
       },
 
-      delete<T>(entity: Entity, comp: Component<T>): void {
-        const map = r.atoms.get(comp)!;
-        map.delete(entity);
+      delete(id, comp) {
+        getMap(comp).delete(id);
         r.atoms.notify(comp);
+        invalidateQueryCache();
       },
 
-      hasComp<T>(entity: Entity, comp: Component<T>): boolean {
-        return r.atoms.get(comp)!.has(entity);
+      select(...comps) {
+        // Check query cache
+        const cacheKey = makeCacheKey('s:', comps);
+        if (queryCacheValid) {
+          const cached = queryCache.get(cacheKey);
+          if (cached) return cached;
+        } else {
+          queryCacheValid = true;
+        }
+
+        // Resolve maps once (avoid repeated WeakMap lookups)
+        const maps = comps.map(c => getMap(c));
+
+        if (maps.length === 0) {
+          const result = r.sets.values($entities);
+          queryCache.set(cacheKey, result);
+          return result;
+        }
+
+        // Sparse iteration: pick smallest map as base
+        let smallestIdx = 0;
+        for (let i = 1; i < maps.length; i++) {
+          if (maps[i]!.size < maps[smallestIdx]!.size) smallestIdx = i;
+        }
+        const base = maps[smallestIdx]!;
+        const others = maps.filter((_, i) => i !== smallestIdx);
+
+        const result: string[] = [];
+        const entitySet = r.atoms.get($entities)!;
+        for (const id of base.keys()) {
+          if (entitySet.has(id) && others.every(m => m.has(id))) {
+            result.push(id);
+          }
+        }
+
+        queryCache.set(cacheKey, result);
+        return result;
       },
 
-      with(...comps: Component<any>[]): Entity[] {
-        const all = r.sets.values($entities);
-        return all.filter((entity: Entity) =>
-          comps.every(comp => r.atoms.get(comp)!.has(entity))
-        );
+      exclude(...comps) {
+        const cacheKey = makeCacheKey('e:', comps);
+        if (queryCacheValid) {
+          const cached = queryCache.get(cacheKey);
+          if (cached) return cached;
+        } else {
+          queryCacheValid = true;
+        }
+
+        const maps = comps.map(c => getMap(c));
+        const entitySet = r.atoms.get($entities)!;
+        const result: string[] = [];
+        for (const id of entitySet) {
+          if (maps.every(m => !m.has(id))) {
+            result.push(id);
+          }
+        }
+
+        queryCache.set(cacheKey, result);
+        return result;
       },
 
-      without(...comps: Component<any>[]): Entity[] {
-        const all = r.sets.values($entities);
-        return all.filter((entity: Entity) =>
-          comps.every(comp => !r.atoms.get(comp)!.has(entity))
-        );
+      dispose() {
+        queryCache.clear();
+        e.dispose();
+        r.dispose();
       },
-
-      dispose: r.dispose,
     };
   };
 }

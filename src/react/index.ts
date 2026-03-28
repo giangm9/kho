@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, createContext, useCallback, useRef } from 'react';
 import type { Atom, Store, System, Reactive, Effects } from '../types';
-import type { Component, Entity } from '../data/entity';
+import type { Component } from '../data/entity';
 import { createStore } from '../data/store';
 import { reactive } from '../data/reactive';
 import { effects } from '../system/effects';
@@ -320,58 +320,50 @@ export function useBatch(): (fn: () => void) => void {
  * Component getter/setter tuple returned by useComponent
  */
 export type UseComponentResult<T> = [
-  /** Get component value for an entity (reads directly from store) */
-  (entity: Entity) => T | undefined,
+  /** Get component value for an entity */
+  (entity: string) => T | undefined,
   /** Set component value for an entity */
-  (entity: Entity, value: T) => void,
+  (entity: string, value: T) => void,
   /** Remove component value for an entity */
-  (entity: Entity) => void
+  (entity: string) => void
 ];
 
 /**
  * React hook for ECS component access with STABLE functions (no re-renders)
  *
- * This hook returns stable getter/setter functions that read/write directly
- * from the store. The component will NOT re-render when component values change.
- *
- * Use this when:
- * - Rendering a list of entities (combine with useAtomValue($entities))
- * - You only need to write values
- * - Child components handle their own subscriptions via useComponentValue
+ * Returns stable getter/setter functions that read/write directly
+ * from the store. The component will NOT re-render when values change.
  *
  * @example
  * function EntityList() {
- *   const entities = useAtomValue($entities); // Re-renders when list changes
- *   const [get, set] = useComponent($position); // Stable, no re-renders
+ *   const entities = useAtomValue($units.$entities);
+ *   const [get, set] = useComponent($position);
  *
- *   return entities.map(e => (
- *     <EntityItem key={e.id} entity={e} />
+ *   return entities.map(id => (
+ *     <EntityItem key={id} entity={id} />
  *   ));
  * }
  *
- * function EntityItem({ entity }) {
- *   const pos = useComponentValue($position, entity); // Re-renders when THIS entity changes
+ * function EntityItem({ entity }: { entity: string }) {
+ *   const pos = useComponentValue($position, entity);
  *   return <div>{pos?.x}, {pos?.y}</div>;
  * }
  */
 export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
   const { reactive: r } = useStoreInternal();
 
-  // Stable getter - reads directly from store (always fresh value)
-  const get = useCallback((entity: Entity): T | undefined => {
+  const get = useCallback((entity: string): T | undefined => {
     const map = r.atoms.get(comp);
     return map?.get(entity);
   }, [comp, r]);
 
-  // Stable setter - mutates WeakMap and notifies
-  const set = useCallback((entity: Entity, value: T): void => {
+  const set = useCallback((entity: string, value: T): void => {
     const map = r.atoms.get(comp)!;
     map.set(entity, value);
     r.atoms.notify(comp);
   }, [comp, r]);
 
-  // Stable remover
-  const remove = useCallback((entity: Entity): void => {
+  const remove = useCallback((entity: string): void => {
     const map = r.atoms.get(comp)!;
     map.delete(entity);
     r.atoms.notify(comp);
@@ -385,14 +377,11 @@ export function useComponent<T>(comp: Component<T>): UseComponentResult<T> {
  * Only re-renders when the specific entity's value changes
  *
  * @example
- * const playerPos = useComponentValue($position, player);
- * // Only re-renders when player's position changes, not other entities
- *
- * const enemyHealth = useComponentValue($health, enemy);
+ * const playerPos = useComponentValue($position, 'player-1');
  */
 export function useComponentValue<T>(
   comp: Component<T>,
-  entity: Entity
+  entity: string
 ): T | undefined {
   const { store, reactive: r } = useStoreInternal();
   const [value, setValue] = useState<T | undefined>(() => {
@@ -401,17 +390,12 @@ export function useComponentValue<T>(
   });
 
   useEffect(() => {
-    // Get initial value
     const map = r.atoms.get(comp);
     setValue(map?.get(entity));
 
-    // Create an effects instance for this subscription
     const e = effects(store);
-
-    // Use a flag to skip the initial run
     let isFirstRun = true;
 
-    // Subscribe to component changes using effect
     e.effect([comp], () => {
       if (isFirstRun) {
         isFirstRun = false;
@@ -420,9 +404,7 @@ export function useComponentValue<T>(
       const newMap = r.atoms.get(comp);
       const newValue = newMap?.get(entity);
       setValue((prev) => {
-        // Only trigger re-render if value actually changed
         if (prev === newValue) return prev;
-        // Deep comparison for objects (simple check)
         if (
           typeof prev === 'object' &&
           typeof newValue === 'object' &&
@@ -444,25 +426,23 @@ export function useComponentValue<T>(
 
 /**
  * React hook to get only the setter for a component (no re-renders)
- * Useful when you only need to update values without reading them
  *
  * @example
  * const [setPosition, removePosition] = useSetComponent($position);
- * setPosition(player, { x: 10, y: 20 });
- * removePosition(enemy);
+ * setPosition('player-1', { x: 10, y: 20 });
  */
 export function useSetComponent<T>(
   comp: Component<T>
-): [(entity: Entity, value: T) => void, (entity: Entity) => void] {
+): [(entity: string, value: T) => void, (entity: string) => void] {
   const { reactive: r } = useStoreInternal();
 
-  const set = useCallback((entity: Entity, value: T): void => {
+  const set = useCallback((entity: string, value: T): void => {
     const map = r.atoms.get(comp)!;
     map.set(entity, value);
     r.atoms.notify(comp);
   }, [comp, r]);
 
-  const remove = useCallback((entity: Entity): void => {
+  const remove = useCallback((entity: string): void => {
     const map = r.atoms.get(comp)!;
     map.delete(entity);
     r.atoms.notify(comp);
@@ -470,19 +450,3 @@ export function useSetComponent<T>(
 
   return [set, remove];
 }
-
-// ============================================
-// Deprecated aliases for backwards compatibility
-// ============================================
-
-/** @deprecated Use UseComponentResult instead */
-export type UseAttributeResult<T> = UseComponentResult<T>;
-
-/** @deprecated Use useComponent instead */
-export const useAttribute = useComponent;
-
-/** @deprecated Use useComponentValue instead */
-export const useAttributeValue = useComponentValue;
-
-/** @deprecated Use useSetComponent instead */
-export const useSetAttribute = useSetComponent;

@@ -1,6 +1,6 @@
 {
     "name": "kho",
-    "version": "1.6.9",
+    "version": "2.0.0",
     "description": "Data-driven state management library with reactive effects",
     "main": "dist/index.cjs",
     "module": "dist/index.js",
