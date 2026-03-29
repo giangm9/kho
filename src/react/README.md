@@ -230,6 +230,46 @@ Creates a scope with lifecycle tied to the component. Automatically disposes whe
 
 Returns a function that batches multiple store updates. Effects only run once after all updates complete.
 
+## ECS Hooks
+
+### `useComponent<T>(comp: Component<T>): [getter, setter, remover]`
+
+Stable getter/setter/remover functions (no re-renders).
+
+```tsx
+import { component } from 'kho';
+import { useComponent } from 'kho/react';
+
+const $position = component({ x: 0, y: 0 });
+
+function EntityList() {
+  const [get, set, remove] = useComponent($position);
+  // get('player-1') → { x: 0, y: 0 }
+  // set('player-1', { x: 10, y: 20 })
+  // remove('player-1')
+}
+```
+
+### `useComponentValue<T>(comp, entity: string): T | undefined`
+
+Reactive — re-renders when this entity's value changes.
+
+```tsx
+function EntityItem({ entity }: { entity: string }) {
+  const pos = useComponentValue($position, entity);
+  return <div>{pos?.x}, {pos?.y}</div>;
+}
+```
+
+### `useSetComponent<T>(comp): [setter, remover]`
+
+Write-only — no re-renders.
+
+```tsx
+const [setPos, removePos] = useSetComponent($position);
+setPos('player-1', { x: 10, y: 20 });
+```
+
 ## How It Works
 
 The React bindings use `scope(store).effect()` internally to subscribe to atom changes. When an atom changes, the effect callback runs and triggers a React state update, causing the component to re-render.

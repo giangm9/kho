@@ -1,46 +1,46 @@
 # ECS (Entity Component System)
 
-Kho ECS provides a lightweight, data-driven Entity Component System built on top of Kho's reactive primitives.
+Kho ECS provides a lightweight, data-driven Entity Component System built on Kho's reactive primitives.
 
 ## Core Concepts
 
 - **Entity** = `string` ID (e.g. `"player-1"`, `"enemy-42"`)
-- **Component** = typed data column bound to an entity registry, stored as `Map<string, T>`
+- **Component** = standalone data column stored as `Atom<Map<string, T>>`
 - **World** = operational interface for querying and mutating entities/components
-- **Entities** = registry definition created by `world()`, groups related entities and their components
+- **ecsBind** = system factory that binds component cleanup to entity lifecycle
 
 ## API
 
-### `world()` — Create entity registry
+### `entities()` — Create entity registry
 
 ```typescript
-import { world } from 'kho';
+import { entities } from 'kho';
 
-const $units = world();
-const $projectiles = world();
+const $units = entities();        // Atom<Set<string>>
+const $projectiles = entities();  // separate registry
 ```
 
-Each `world()` creates an independent `Entities` registry. Use multiple registries for query optimization — query only the relevant subset instead of scanning all entities.
+Returns `Atom<Set<string>>`. Use multiple registries for query optimization.
 
-### `component(entities, defaultValue?)` — Define component
+### `component(defaultValue?)` — Create component
 
 ```typescript
 import { component, componentWithFactory } from 'kho';
 
-const $position = component($units, { x: 0, y: 0 });
-const $health = component($units, 100);
-const $velocity = component($units);  // no default
+const $position = component({ x: 0, y: 0 });
+const $health = component(100);
+const $tag = component<boolean>();  // no default
 
 // Use componentWithFactory for mutable defaults (fresh copy per entity)
-const $inventory = componentWithFactory($units, () => []);
-const $stats = componentWithFactory($units, () => ({ hp: 100, mp: 50 }));
+const $inventory = componentWithFactory(() => []);
+const $stats = componentWithFactory(() => ({ hp: 100, mp: 50 }));
 ```
 
-Components are registered to their `Entities` at definition time. This lets `remove()` know exactly which components to clean up.
+Components are standalone — not bound to any entity registry. Any component can be used with any registry.
 
-**Note:** `component($units, { x: 0, y: 0 })` returns the same reference for every entity. Use `componentWithFactory()` when you need per-entity copies of mutable objects.
+**Note:** `component({ x: 0, y: 0 })` returns the same default reference for every entity. Use `componentWithFactory()` when you need per-entity copies of mutable objects.
 
-### `query(entities)` — Create World factory
+### `query($entities)` — Create World factory
 
 ```typescript
 import { query } from 'kho';
@@ -49,12 +49,36 @@ import { query } from 'kho';
 const worldFactory = query($units);
 ```
 
+### `ecsBind($entities, components, options?)` — Component cleanup
+
+```typescript
+import { ecsBind } from 'kho/systems';
+
+// When entities are removed from $units, clean up their component data
+const unitsBind = ecsBind($units, [$position, $velocity, $health]);
+
+// With debounce batching
+const unitsBind = ecsBind($units, [$position, $health], { batch: 16 });
+```
+
+**Options:**
+- `batch: number` — debounce cleanup by N ms (e.g. `16` for frame-aligned)
+- `batch: true` — immediate but batched notifications
+- `batch: false` or omitted — immediate cleanup
+
+`ecsBind` is a `System` — register it via `$systems`:
+
+```typescript
+sets.add($systems, unitsBind);
+```
+
 ### World operations
 
 ```typescript
-import { system } from 'kho';
+import { system, effects } from 'kho';
 
 const gameSystem = system((scope) => {
+  const { interval } = scope(effects);
   const { add, remove, get, set, has, all, select, exclude } = scope(query($units));
 
   // Add entities
@@ -80,7 +104,7 @@ const gameSystem = system((scope) => {
   const idle = exclude($velocity);               // entities WITHOUT listed components
   const everyone = all();                        // all entities
 
-  // Remove entity — auto-cleans all component data (batched)
+  // Remove entity — ecsBind handles component cleanup
   remove('enemy-1');
 });
 ```
@@ -90,7 +114,7 @@ const gameSystem = system((scope) => {
 | Method | Description |
 |--------|-------------|
 | `add(id)` | Add entity to registry |
-| `remove(id)` | Remove entity + cleanup all component data (batched) |
+| `remove(id)` | Remove entity from registry |
 | `has(id)` | Check if entity exists |
 | `has(id, comp)` | Check if entity has component |
 | `all()` | Get all entity IDs |
@@ -104,38 +128,42 @@ const gameSystem = system((scope) => {
 ## Complete Example
 
 ```typescript
-import { world, component, componentWithFactory, query, system, effects, createStore } from 'kho';
+import { entities, component, query, system, effects, createStore, reactive, ignite, $systems } from 'kho';
+import { ecsBind } from 'kho/systems';
 
 // Define entity registry
-const $units = world();
+const $units = entities();
 
-// Define components
-const $position = component($units, { x: 0, y: 0 });
-const $velocity = component($units, { vx: 0, vy: 0 });
-const $health = component($units, 100);
+// Define components (standalone)
+const $position = component({ x: 0, y: 0 });
+const $velocity = component({ vx: 0, vy: 0 });
+const $health = component(100);
+
+// Bind cleanup
+const unitsBind = ecsBind($units, [$position, $velocity, $health]);
 
 // Movement system
 const movementSystem = system((scope) => {
   const { interval } = scope(effects);
-  const w = scope(query($units));
+  const { add, set, get, select } = scope(query($units));
 
   // Spawn entities
-  w.add('player');
-  w.set('player', $position, { x: 0, y: 0 });
-  w.set('player', $velocity, { vx: 1, vy: 0 });
-  w.set('player', $health, 100);
+  add('player');
+  set('player', $position, { x: 0, y: 0 });
+  set('player', $velocity, { vx: 1, vy: 0 });
+  set('player', $health, 100);
 
-  w.add('enemy');
-  w.set('enemy', $position, { x: 100, y: 50 });
-  w.set('enemy', $health, 50);
+  add('enemy');
+  set('enemy', $position, { x: 100, y: 50 });
+  set('enemy', $health, 50);
   // enemy has no velocity — it's static
 
   // Game loop: update positions
   interval(16, () => {
-    for (const id of w.select($position, $velocity)) {
-      const pos = w.get(id, $position)!;
-      const vel = w.get(id, $velocity)!;
-      w.set(id, $position, {
+    for (const id of select($position, $velocity)) {
+      const pos = get(id, $position)!;
+      const vel = get(id, $velocity)!;
+      set(id, $position, {
         x: pos.x + vel.vx,
         y: pos.y + vel.vy,
       });
@@ -145,7 +173,10 @@ const movementSystem = system((scope) => {
 
 // Start
 const store = createStore();
-const dispose = movementSystem(store);
+const { sets } = reactive(store);
+sets.add($systems, unitsBind);
+sets.add($systems, movementSystem);
+const dispose = ignite(store);
 
 // Cleanup
 dispose();
@@ -156,37 +187,41 @@ dispose();
 Use separate registries for query optimization:
 
 ```typescript
-const $units = world();       // players, enemies
-const $projectiles = world(); // bullets, missiles
-const $effects = world();     // particles, explosions
+const $units = entities();       // players, enemies
+const $projectiles = entities(); // bullets, missiles
 
-const $position = component($units, { x: 0, y: 0 });
-const $projPos = component($projectiles, { x: 0, y: 0 });
+const $position = component({ x: 0, y: 0 });
 
-// Queries are scoped — only scan relevant entities
+// Bind cleanup per registry
+const unitsBind = ecsBind($units, [$position, $health]);
+const projBind = ecsBind($projectiles, [$position, $damage]);
+
+// Queries are scoped to registry
 const unitWorld = scope(query($units));
 const projWorld = scope(query($projectiles));
 
 // 500 units + 10,000 projectiles
 // unitWorld.select($position) scans 500, not 10,500
-// projWorld.select($projPos) scans 10,000, not 10,500
 ```
 
-## Component Cleanup
+## Component Cleanup (ecsBind)
 
-When `remove(id)` is called:
+When an entity is removed from the registry:
 
-1. Iterates only components registered to this `Entities` (known at definition time)
-2. Deletes entity data from each component `Map`
-3. All notifications are **batched** — effects fire once after all cleanup completes
-4. Removes entity from the registry `Set`
+1. `ecsBind` detects the removal (watches `$entities` atom)
+2. Diffs previous vs current entity set
+3. For each removed entity, deletes data from all bound component Maps
+4. All notifications are **batched** — effects fire once after all cleanup
 
 ```typescript
-// $units has 3 components: $position, $velocity, $health
-w.remove('player');
-// Scans 3 maps (not ALL components in the app)
-// Effects fire ONCE after all 3 are cleaned
+// $units has ecsBind with [$position, $velocity, $health]
+remove('player');
+// ecsBind detects 'player' removed
+// Cleans $position, $velocity, $health maps
+// Effects fire ONCE after all cleanup
 ```
+
+**Per-store isolation:** `ecsBind` is a system — it runs per-store. Server store only sets `$position` → ecsBind only cleans `$position` data (the Map for unused components is empty).
 
 ## React Integration
 
@@ -195,10 +230,10 @@ import { useAtomValue } from 'kho/react';
 import { useComponent, useComponentValue } from 'kho/react';
 
 function UnitList() {
-  const entities = useAtomValue($units.$entities);
+  const unitEntities = useAtomValue($units);
   const [get, set] = useComponent($position);
 
-  return entities.map(id => (
+  return [...unitEntities].map(id => (
     <UnitItem key={id} entity={id} />
   ));
 }
@@ -216,12 +251,12 @@ function UnitItem({ entity }: { entity: string }) {
 import { useAtomValue } from 'kho/vue';
 import { useComponent, useComponentValue } from 'kho/vue';
 
-const entities = useAtomValue($units.$entities);
+const unitEntities = useAtomValue($units);
 const [getPos, setPos] = useComponent($position);
 </script>
 
 <template>
-  <div v-for="id in entities" :key="id">
+  <div v-for="id in unitEntities" :key="id">
     <UnitItem :entity="id" />
   </div>
 </template>

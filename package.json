@@ -21,6 +21,11 @@
             "import": "./dist/vue/index.js",
             "require": "./dist/vue/index.cjs",
             "types": "./dist/vue/index.d.ts"
+        },
+        "./systems": {
+            "import": "./dist/systems/index.js",
+            "require": "./dist/systems/index.cjs",
+            "types": "./dist/systems/index.d.ts"
         }
     },
     "scripts": {

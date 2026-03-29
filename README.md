@@ -295,20 +295,25 @@ dispose();  // All cleanup handled automatically
 For game development and similar use cases. See [full ECS documentation](docs/ecs.md).
 
 ```typescript
-import { world, component, query, system, effects } from 'kho';
+import { entities, component, query, system, effects, reactive, $systems } from 'kho';
+import { ecsBind } from 'kho/systems';
 
-// Define entity registry + components
-const $units = world();
-const $position = component($units, { x: 0, y: 0 });
-const $velocity = component($units, { vx: 0, vy: 0 });
-const $health = component($units, 100);
+// Entity registry
+const $units = entities();
+
+// Standalone components (not bound to any registry)
+const $position = component({ x: 0, y: 0 });
+const $velocity = component({ vx: 0, vy: 0 });
+const $health = component(100);
+
+// Bind component cleanup to entity lifecycle
+const unitsBind = ecsBind($units, [$position, $velocity, $health]);
 
 // Game system
 const gameSystem = system((scope) => {
   const { interval } = scope(effects);
   const { add, set, get, select, remove } = scope(query($units));
 
-  // Add entities (string IDs)
   add('player-1');
   set('player-1', $position, { x: 0, y: 0 });
   set('player-1', $velocity, { vx: 1, vy: 0 });
@@ -330,33 +335,41 @@ const gameSystem = system((scope) => {
     }
   });
 
-  // Cleanup: removes entity + all component data (batched)
+  // remove() removes from entity set
+  // ecsBind handles component data cleanup automatically
   remove('enemy-1');
 });
+
+// Start
+const store = createStore();
+const { sets } = reactive(store);
+sets.add($systems, unitsBind);
+sets.add($systems, gameSystem);
+const dispose = ignite(store);
 ```
 
 ### World API
 
 ```typescript
-const w = scope(query($units));
+const { add, remove, has, all, get, set, delete: del, select, exclude, dispose } = scope(query($units));
 
 // Entity lifecycle
-w.add(id)                    // Add entity
-w.remove(id)                 // Remove entity + cleanup all components
-w.has(id)                    // Entity exists?
-w.has(id, $comp)             // Entity has component?
-w.all()                      // All entity IDs
+add(id)                      // Add entity to set
+remove(id)                   // Remove from set (ecsBind cleans components)
+has(id)                      // Entity exists?
+has(id, $comp)               // Entity has component?
+all()                        // All entity IDs
 
 // Component operations
-w.get(id, $comp)             // Get value (or default)
-w.set(id, $comp, value)      // Set value
-w.delete(id, $comp)          // Remove component from entity
+get(id, $comp)               // Get value (or default)
+set(id, $comp, value)        // Set value
+del(id, $comp)               // Remove component from entity
 
 // Queries
-w.select($a, $b)             // Entities with ALL components
-w.exclude($a)                // Entities WITHOUT components
+select($a, $b)               // Entities with ALL components
+exclude($a)                  // Entities WITHOUT components
 
-w.dispose()                  // Cleanup
+dispose()                    // Cleanup
 ```
 
 ## System Orchestration
@@ -481,10 +494,16 @@ const dragSystem = system((scope) => {
 
 | Function | Description |
 |----------|-------------|
-| `world()` | Create entity registry (Entities) |
-| `component(entities, default?)` | Create component bound to registry |
-| `componentWithFactory(entities, fn)` | Component with default factory |
-| `query(entities)` | Create World factory for scope() |
+| `entities()` | Create entity registry `Atom<Set<string>>` |
+| `component(default?)` | Create standalone component |
+| `componentWithFactory(fn)` | Component with default factory |
+| `query($entities)` | Create World factory for scope() |
+
+### Built-in Systems (`kho/systems`)
+
+| Function | Description |
+|----------|-------------|
+| `ecsBind($entities, comps, opts?)` | Bind component cleanup to entity lifecycle |
 
 ### Attributes
 

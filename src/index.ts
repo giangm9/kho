@@ -33,5 +33,5 @@ export { registry, attribute, attributeWithFactory, attributes } from './data/at
 export type { Attribute, Attributes } from './data/attribute';
 
 // ECS (Entity Component System)
-export { world, component, componentWithFactory, query } from './data/entity';
-export type { EntityId, Entity, Entities, Component, World } from './data/entity';
+export { entities, component, componentWithFactory, query } from './data/entity';
+export type { EntityId, Entity, Component, World } from './data/entity';

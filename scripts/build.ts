@@ -21,6 +21,7 @@ async function build() {
     fs.mkdirSync(DIST_DIR, { recursive: true });
     fs.mkdirSync(path.join(DIST_DIR, "react"), { recursive: true });
     fs.mkdirSync(path.join(DIST_DIR, "vue"), { recursive: true });
+    fs.mkdirSync(path.join(DIST_DIR, "systems"), { recursive: true });
 
     // Build core library - ESM
     console.log("Building core library (ESM)...");
@@ -110,6 +111,34 @@ async function build() {
         logLevel: "info",
     });
 
+    // Build Systems - ESM
+    console.log("Building Systems (ESM)...");
+    await esbuild.build({
+        entryPoints: [path.join(SRC_DIR, "systems", "index.ts")],
+        bundle: true,
+        outfile: path.join(DIST_DIR, "systems", "index.js"),
+        format: "esm",
+        minify: true,
+        sourcemap: true,
+        platform: "browser",
+        target: "es2020",
+        logLevel: "info",
+    });
+
+    // Build Systems - CJS
+    console.log("Building Systems (CJS)...");
+    await esbuild.build({
+        entryPoints: [path.join(SRC_DIR, "systems", "index.ts")],
+        bundle: true,
+        outfile: path.join(DIST_DIR, "systems", "index.cjs"),
+        format: "cjs",
+        minify: true,
+        sourcemap: true,
+        platform: "node",
+        target: "node16",
+        logLevel: "info",
+    });
+
     // Generate type definitions using TypeScript compiler
     console.log("Generating type definitions...");
     const { execSync } = await import("child_process");
@@ -124,6 +153,10 @@ async function build() {
         stdio: "inherit",
     });
     execSync(`npx tsc ${tscFlags} --outDir dist src/vue/index.ts`, {
+        cwd: process.cwd(),
+        stdio: "inherit",
+    });
+    execSync(`npx tsc ${tscFlags} --outDir dist src/systems/index.ts src/systems/ecs-bind.ts`, {
         cwd: process.cwd(),
         stdio: "inherit",
     });
@@ -143,6 +176,12 @@ async function build() {
     const vueCjsSize = fs.statSync(
         path.join(DIST_DIR, "vue", "index.cjs"),
     ).size;
+    const systemsEsmSize = fs.statSync(
+        path.join(DIST_DIR, "systems", "index.js"),
+    ).size;
+    const systemsCjsSize = fs.statSync(
+        path.join(DIST_DIR, "systems", "index.cjs"),
+    ).size;
 
     console.log("\n✅ Build complete!");
     console.log("   Core:");
@@ -153,7 +192,10 @@ async function build() {
     console.log(`     CJS: ${(reactCjsSize / 1024).toFixed(2)} KB`);
     console.log("   Vue:");
     console.log(`     ESM: ${(vueEsmSize / 1024).toFixed(2)} KB`);
-    console.log(`     CJS: ${(vueCjsSize / 1024).toFixed(2)} KB\n`);
+    console.log(`     CJS: ${(vueCjsSize / 1024).toFixed(2)} KB`);
+    console.log("   Systems:");
+    console.log(`     ESM: ${(systemsEsmSize / 1024).toFixed(2)} KB`);
+    console.log(`     CJS: ${(systemsCjsSize / 1024).toFixed(2)} KB\n`);
 }
 
 build().catch((error) => {

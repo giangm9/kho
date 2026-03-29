@@ -1,7 +1,6 @@
 import { atomWithFactory } from './atom';
 import type { Atom, Store } from '../types';
 import { reactive } from './reactive';
-import { effects } from '../system/effects';
 
 // ============================================
 // Types
@@ -11,25 +10,16 @@ export type EntityId = string;
 export type Entity = string;
 
 /**
- * Entities — entity registry + component registry
- * Created by world(), used by query() and component()
- */
-export type Entities = {
-  readonly $entities: Atom<Set<string>>;
-  readonly _components: Set<Component<any>>;
-};
-
-/**
- * Component — Atom<Map<string, T>> bound to an Entities registry
+ * Component — standalone Atom<Map<string, T>>
+ * Each component is a data column: entity ID → value
  */
 export type Component<T> = Atom<Map<string, T>> & {
-  readonly _entities: Entities;
   defaultFactory?: () => T;
 };
 
 /**
- * World — operational interface for entity/component operations
- * Returned by query(entities)(store)
+ * World — operational interface for entity/component queries
+ * Returned by query($entities)(store)
  */
 export type World = {
   add(id: string): void;
@@ -50,34 +40,29 @@ export type World = {
 // ============================================
 
 /**
- * Create an entity registry (Entities)
+ * Create an entity registry
  *
  * @example
- * const $units = world();
- * const $position = component($units, { x: 0, y: 0 });
- * const $health = component($units, 100);
+ * const $units = entities();
+ * const $projectiles = entities();
  */
-export function world(): Entities {
-  const $entities = atomWithFactory(() => new Set<string>());
-  const _components = new Set<Component<any>>();
-  return { $entities, _components };
+export function entities(): Atom<Set<string>> {
+  return atomWithFactory(() => new Set<string>());
 }
 
 /**
- * Create a component bound to an Entities registry
+ * Create a standalone component
  *
  * @example
- * const $units = world();
- * const $position = component($units, { x: 0, y: 0 });
- * const $health = component($units, 100);
+ * const $position = component({ x: 0, y: 0 });
+ * const $health = component(100);
+ * const $tag = component<boolean>();
  */
-export function component<T>(entities: Entities, defaultValue?: T): Component<T> {
+export function component<T>(defaultValue?: T): Component<T> {
   const comp = atomWithFactory(() => new Map<string, T>()) as Component<T>;
-  (comp as any)._entities = entities;
   if (defaultValue !== undefined) {
     comp.defaultFactory = () => defaultValue;
   }
-  entities._components.add(comp);
   return comp;
 }
 
@@ -86,14 +71,12 @@ export function component<T>(entities: Entities, defaultValue?: T): Component<T>
  * Each entity gets a fresh value from the factory
  *
  * @example
- * const $inventory = componentWithFactory($units, () => []);
- * const $stats = componentWithFactory($units, () => ({ hp: 100, mp: 50 }));
+ * const $inventory = componentWithFactory(() => []);
+ * const $stats = componentWithFactory(() => ({ hp: 100, mp: 50 }));
  */
-export function componentWithFactory<T>(entities: Entities, factory: () => T): Component<T> {
+export function componentWithFactory<T>(factory: () => T): Component<T> {
   const comp = atomWithFactory(() => new Map<string, T>()) as Component<T>;
-  (comp as any)._entities = entities;
   comp.defaultFactory = factory;
-  entities._components.add(comp);
   return comp;
 }
 
@@ -102,15 +85,18 @@ export function componentWithFactory<T>(entities: Entities, factory: () => T): C
 // ============================================
 
 /**
- * Create a World factory for an Entities registry
+ * Create a World factory for an entity registry
  * Returns (store) => World, compatible with scope()
  *
+ * Note: remove() only removes from entity set.
+ * Use ecsBind from 'kho/systems' for component cleanup.
+ *
  * @example
- * const $units = world();
- * const $position = component($units, { x: 0, y: 0 });
+ * const $units = entities();
+ * const $position = component({ x: 0, y: 0 });
  *
  * const gameSystem = system((scope) => {
- *   const { add, set, select } = scope(query($units));
+ *   const { add, set, get, select } = scope(query($units));
  *
  *   add('player-1');
  *   set('player-1', $position, { x: 10, y: 20 });
@@ -120,12 +106,9 @@ export function componentWithFactory<T>(entities: Entities, factory: () => T): C
  *   }
  * });
  */
-export function query(entities: Entities): (store: Store) => World {
-  const { $entities, _components } = entities;
-
+export function query($entities: Atom<Set<string>>): (store: Store) => World {
   return (store: Store): World => {
     const r = reactive(store);
-    const e = effects(store);
 
     // Cache: component → Map (avoids repeated WeakMap lookups)
     const mapCache = new WeakMap<Component<any>, Map<string, any>>();
@@ -138,8 +121,7 @@ export function query(entities: Entities): (store: Store) => World {
       return map as Map<string, T>;
     };
 
-    // Query cache: serialized comp key → result
-    // Invalidated on any add/remove/set/delete
+    // Query cache: invalidated on any mutation
     let queryCache = new Map<string, string[]>();
     let queryCacheValid = true;
 
@@ -150,7 +132,7 @@ export function query(entities: Entities): (store: Store) => World {
       }
     };
 
-    // Comp key for query cache (use object identity via index)
+    // Comp key for query cache
     const compKeys = new WeakMap<Component<any>, number>();
     let compKeyCounter = 0;
     const getCompKey = (comp: Component<any>): number => {
@@ -173,16 +155,7 @@ export function query(entities: Entities): (store: Store) => World {
       },
 
       remove(id) {
-        e.batch(() => {
-          for (const comp of _components) {
-            const map = getMap(comp);
-            if (map.has(id)) {
-              map.delete(id);
-              r.atoms.notify(comp);
-            }
-          }
-          r.sets.remove($entities, id);
-        });
+        r.sets.remove($entities, id);
         invalidateQueryCache();
       },
 
@@ -213,7 +186,6 @@ export function query(entities: Entities): (store: Store) => World {
       },
 
       select(...comps) {
-        // Check query cache
         const cacheKey = makeCacheKey('s:', comps);
         if (queryCacheValid) {
           const cached = queryCache.get(cacheKey);
@@ -222,7 +194,6 @@ export function query(entities: Entities): (store: Store) => World {
           queryCacheValid = true;
         }
 
-        // Resolve maps once (avoid repeated WeakMap lookups)
         const maps = comps.map(c => getMap(c));
 
         if (maps.length === 0) {
@@ -275,7 +246,6 @@ export function query(entities: Entities): (store: Store) => World {
 
       dispose() {
         queryCache.clear();
-        e.dispose();
         r.dispose();
       },
     };
