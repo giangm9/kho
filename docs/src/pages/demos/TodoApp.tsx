@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { atom, createStore, reactive, effects, signal, listen, system, ignite, $systems, entities, component, world } from 'kho';
-import type { Entity } from 'kho';
+import { atom, createStore, reactive, effects, signal, listen, system, ignite, $systems, entities, component, query } from 'kho';
 import { KhoProvider, useAtom, useAtomValue, useStore, useComponentValue, useSetComponent } from 'kho/react';
 import { CodeTabs } from '../../components/CodeTabs';
-import { LuUndo2, LuRedo2, LuHistory, LuPlus, LuCheck, LuX, LuTrash2 } from 'react-icons/lu';
+import { LuUndo2, LuRedo2, LuHistory, LuPlus, LuCheck, LuX, LuTrash2, LuChevronUp, LuChevronsUp, LuArrowBigUpDash } from 'react-icons/lu';
 
 // ============================================
 // Types
@@ -61,12 +60,12 @@ const todoSystem = system((scope) => {
 
   compute([$todos, $filter], $filtered, (todos: Todo[], filter: Filter) => {
     if (filter === 'all') return todos;
-    if (filter === 'active') return todos.filter(t => !t.done);
-    return todos.filter(t => t.done);
+    if (filter === 'active') return todos.filter(todo => !todo.done);
+    return todos.filter(todo => todo.done);
   });
 
   compute([$todos], $remaining, (todos: Todo[]) =>
-    todos.filter(t => !t.done).length,
+    todos.filter(todo => !todo.done).length,
   );
 
   let nextId = 1;
@@ -81,19 +80,19 @@ const todoSystem = system((scope) => {
 
   on(requestToggle, (id) => {
     const todos = atoms.get($todos) ?? [];
-    atoms.set($todos, todos.map(t =>
-      t.id === id! ? { ...t, done: !t.done } : t,
+    atoms.set($todos, todos.map(todo =>
+      todo.id === id! ? { ...todo, done: !todo.done } : todo,
     ));
   });
 
   on(requestRemove, (id) => {
     const todos = atoms.get($todos) ?? [];
-    atoms.set($todos, todos.filter(t => t.id !== id!));
+    atoms.set($todos, todos.filter(todo => todo.id !== id!));
   });
 
   on(requestClear, () => {
     const todos = atoms.get($todos) ?? [];
-    atoms.set($todos, todos.filter(t => !t.done));
+    atoms.set($todos, todos.filter(todo => !todo.done));
   });
 });
 
@@ -113,8 +112,8 @@ const historySystem = system((scope) => {
     atoms.set($redoStack, []);
   });
 
-  compute([$undoStack], $canUndo, (s: Todo[][]) => s.length > 1);
-  compute([$redoStack], $canRedo, (s: Todo[][]) => s.length > 0);
+  compute([$undoStack], $canUndo, (stack: Todo[][]) => stack.length > 1);
+  compute([$redoStack], $canRedo, (stack: Todo[][]) => stack.length > 0);
 
   on(requestUndo, () => {
     const undo = atoms.get($undoStack) ?? [];
@@ -159,26 +158,26 @@ const metadataSystem = system((scope) => {
 
   on(requestSetCategory, (payload) => {
     const { id, category } = payload!;
-    const m = new Map(atoms.get($categories));
-    category ? m.set(id, category) : m.delete(id);
-    atoms.set($categories, m);
+    const updated = new Map(atoms.get($categories));
+    category ? updated.set(id, category) : updated.delete(id);
+    atoms.set($categories, updated);
   });
 
   on(requestSetPriority, (payload) => {
     const { id, priority } = payload!;
-    const m = new Map(atoms.get($priorities));
-    m.set(id, priority);
-    atoms.set($priorities, m);
+    const updated = new Map(atoms.get($priorities));
+    updated.set(id, priority);
+    atoms.set($priorities, updated);
   });
 
   // Auto-cleanup: when a todo is removed, its metadata follows
   effect([$todos], () => {
-    const ids = new Set((atoms.get($todos) ?? []).map(t => t.id));
+    const ids = new Set((atoms.get($todos) ?? []).map(todo => todo.id));
     const cats = new Map(atoms.get($categories)!);
     const pris = new Map(atoms.get($priorities)!);
     let dirty = false;
-    for (const k of cats.keys()) if (!ids.has(k)) { cats.delete(k); dirty = true; }
-    for (const k of pris.keys()) if (!ids.has(k)) { pris.delete(k); dirty = true; }
+    for (const entityId of cats.keys()) if (!ids.has(entityId)) { cats.delete(entityId); dirty = true; }
+    for (const entityId of pris.keys()) if (!ids.has(entityId)) { pris.delete(entityId); dirty = true; }
     if (dirty) {
       atoms.set($categories, cats);
       atoms.set($priorities, pris);
@@ -187,8 +186,8 @@ const metadataSystem = system((scope) => {
 });
 
 // ── ECS (Step 7) — kho's built-in Entity-Component-System ──
-// entities() = registry (Set<Entity>), component<T>() = WeakMap<Entity, T>
-// world() = scope factory that provides entity/component operations
+// entities() = registry (Set<string>), component<T>() = standalone component
+// query() = scope factory that provides entity/component operations
 const $todoEntities = entities();
 const $ecsCategory = component<string>();
 const $ecsPriority = component<'low' | 'medium' | 'high'>();
@@ -198,25 +197,22 @@ const requestSetEcsPriority = signal<{ id: string; priority: 'low' | 'medium' | 
 const requestRemoveEcsEntity = signal<string>();
 
 const ecsSystem = system((scope) => {
-  const w = scope(world($todoEntities));
+  const world = scope(query($todoEntities));
   const { on } = scope(listen);
 
   on(requestSetEcsCategory, (payload) => {
     const { id, category } = payload!;
-    const e = w.entity(id);
-    if (category) w.set(e, $ecsCategory, category);
-    else w.delete(e, $ecsCategory);
+    if (category) world.set(id, $ecsCategory, category);
+    else world.delete(id, $ecsCategory);
   });
 
   on(requestSetEcsPriority, (payload) => {
     const { id, priority } = payload!;
-    w.set(w.entity(id), $ecsPriority, priority);
+    world.set(id, $ecsPriority, priority);
   });
 
   on(requestRemoveEcsEntity, (id) => {
-    const e = w.entity(id!);
-    w.remove(e);
-    // WeakMap auto-cleans component data when entity ref is GC'd
+    world.remove(id!);
   });
 });
 
@@ -241,18 +237,18 @@ function TodoInput() {
 
   return (
     <form
-      style={{ display: 'flex', gap: 8, alignItems: 'center' }}
-      onSubmit={e => { e.preventDefault(); emit(requestAdd); }}
+      style={{ display: 'flex', gap: 10, alignItems: 'center' }}
+      onSubmit={event => { event.preventDefault(); emit(requestAdd); }}
     >
       <input
         style={{
-          flex: 1, minWidth: 0, padding: '7px 10px',
+          flex: 1, minWidth: 0, padding: '10px 14px',
           borderRadius: 8, border: '1px solid var(--color-border)',
           background: 'var(--color-bg-code)', color: 'var(--color-text)',
-          fontSize: 13, outline: 'none',
+          fontSize: 14, outline: 'none',
         }}
         value={input}
-        onChange={e => setInput(e.target.value)}
+        onChange={event => setInput(event.target.value)}
         placeholder="What needs to be done?"
       />
       <button
@@ -260,12 +256,12 @@ function TodoInput() {
         disabled={!input.trim()}
         style={{
           flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: 30, height: 30, borderRadius: 8,
+          width: 36, height: 36, borderRadius: 8,
           background: 'var(--color-accent)', color: '#fff',
           opacity: input.trim() ? 1 : 0.35, border: 'none',
         }}
       >
-        <LuPlus style={{ fontSize: 14 }} />
+        <LuPlus style={{ fontSize: 16 }} />
       </button>
     </form>
   );
@@ -284,18 +280,18 @@ function TodoList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Filter bar */}
       <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--color-border)' }}>
-        {filters.map(f => (
+        {filters.map(filterOption => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
+            key={filterOption}
+            onClick={() => setFilter(filterOption)}
             style={{
               flex: 1, padding: '5px 0', fontSize: 11, fontWeight: 600, border: 'none',
-              background: filter === f ? 'var(--color-accent)' : 'var(--color-bg-code)',
-              color: filter === f ? '#fff' : 'var(--color-text-muted)',
+              background: filter === filterOption ? 'var(--color-accent)' : 'var(--color-bg-code)',
+              color: filter === filterOption ? '#fff' : 'var(--color-text-muted)',
               cursor: 'pointer',
             }}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {filterOption.charAt(0).toUpperCase() + filterOption.slice(1)}
           </button>
         ))}
       </div>
@@ -307,37 +303,37 @@ function TodoList() {
         </div>
       ) : (
         <div style={{ borderRadius: 8, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
-          {filtered.map((t, i) => (
+          {filtered.map((todo, index) => (
             <div
-              key={t.id}
+              key={todo.id}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '8px 12px',
-                borderTop: i > 0 ? '1px solid var(--color-border)' : 'none',
+                borderTop: index > 0 ? '1px solid var(--color-border)' : 'none',
               }}
               className="group"
             >
               <button
-                onClick={() => emit(requestToggle, t.id)}
+                onClick={() => emit(requestToggle, todo.id)}
                 style={{
                   flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-                  border: t.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
-                  background: t.done ? 'var(--color-accent)' : 'transparent',
+                  border: todo.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
+                  background: todo.done ? 'var(--color-accent)' : 'transparent',
                   color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: 'pointer', padding: 0,
                 }}
               >
-                {t.done && <LuCheck style={{ fontSize: 10 }} />}
+                {todo.done && <LuCheck style={{ fontSize: 10 }} />}
               </button>
               <span style={{
                 flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                textDecoration: t.done ? 'line-through' : 'none',
-                color: t.done ? 'var(--color-text-dim)' : 'var(--color-text)',
+                textDecoration: todo.done ? 'line-through' : 'none',
+                color: todo.done ? 'var(--color-text-dim)' : 'var(--color-text)',
               }}>
-                {t.text}
+                {todo.text}
               </span>
               <button
-                onClick={() => emit(requestRemove, t.id)}
+                onClick={() => emit(requestRemove, todo.id)}
                 className="opacity-0 group-hover:opacity-100"
                 style={{
                   flexShrink: 0, background: 'none', border: 'none', padding: 2,
@@ -378,15 +374,15 @@ function describeSnapshot(prev: Todo[] | undefined, current: Todo[]): string {
   if (!prev || prev.length === 0 && current.length === 0) return 'Initial state';
   if (!prev) return 'Initial state';
   if (current.length > prev.length) {
-    const added = current.find(t => !prev.some(p => p.id === t.id));
+    const added = current.find(todo => !prev.some(prevTodo => prevTodo.id === todo.id));
     return added ? `Add "${added.text}"` : 'Add item';
   }
   if (current.length < prev.length) {
-    const removed = prev.find(t => !current.some(c => c.id === t.id));
+    const removed = prev.find(todo => !current.some(curTodo => curTodo.id === todo.id));
     if (removed) return `Remove "${removed.text}"`;
     return `Clear ${prev.length - current.length} done`;
   }
-  const toggled = current.find((t, i) => prev[i] && t.done !== prev[i]!.done);
+  const toggled = current.find((todo, idx) => prev[idx] && todo.done !== prev[idx]!.done);
   if (toggled) return `${toggled.done ? 'Complete' : 'Uncomplete'} "${toggled.text}"`;
   return 'Update';
 }
@@ -492,15 +488,15 @@ function HistoryPanel() {
 function Step1Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
-    r.atoms.set($todos, [
+    const reactiveOps = reactive(store);
+    reactiveOps.atoms.set($todos, [
       { id: 1, text: 'Buy groceries', done: true },
       { id: 2, text: 'Walk the dog', done: false },
       { id: 3, text: 'Read a book', done: false },
     ]);
-    r.sets.add($systems, todoSystem);
+    reactiveOps.sets.add($systems, todoSystem);
     const dispose = ignite(store);
-    return () => { dispose(); r.dispose(); };
+    return () => { dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -523,12 +519,12 @@ function AtomInspector() {
       </div>
       <Row label="$todos" value={`[${todos.length} items]`} />
       <div style={{ paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {todos.map(t => (
-          <span key={t.id} style={{
-            color: t.done ? 'var(--color-text-dim)' : 'var(--color-text-muted)',
-            textDecoration: t.done ? 'line-through' : 'none',
+        {todos.map(todo => (
+          <span key={todo.id} style={{
+            color: todo.done ? 'var(--color-text-dim)' : 'var(--color-text-muted)',
+            textDecoration: todo.done ? 'line-through' : 'none',
           }}>
-            {t.done ? '\u2611' : '\u2610'} {t.text}
+            {todo.done ? '\u2611' : '\u2610'} {todo.text}
           </span>
         ))}
       </div>
@@ -554,10 +550,10 @@ function Row({ label, value }: { label: string; value: string }) {
 function Step2Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
-    r.sets.add($systems, todoSystem);
+    const reactiveOps = reactive(store);
+    reactiveOps.sets.add($systems, todoSystem);
     const dispose = ignite(store);
-    return () => { dispose(); r.dispose(); };
+    return () => { dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -573,11 +569,11 @@ function Step2Demo() {
 function Step3Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
-    r.sets.add($systems, todoSystem);
-    r.sets.add($systems, historySystem);
+    const reactiveOps = reactive(store);
+    reactiveOps.sets.add($systems, todoSystem);
+    reactiveOps.sets.add($systems, historySystem);
     const dispose = ignite(store);
-    return () => { dispose(); r.dispose(); };
+    return () => { dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -597,11 +593,11 @@ function Step3Demo() {
 function Step4Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
-    r.sets.add($systems, todoSystem);
-    r.sets.add($systems, historySystem);
+    const reactiveOps = reactive(store);
+    reactiveOps.sets.add($systems, todoSystem);
+    reactiveOps.sets.add($systems, historySystem);
     const dispose = ignite(store);
-    return () => { dispose(); r.dispose(); };
+    return () => { dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -636,7 +632,37 @@ const PRIO_COLORS: Record<string, string> = {
   low: 'var(--color-green)',
 };
 const CATEGORIES = ['work', 'personal', 'errands'];
-const PRIORITIES: ('low' | 'medium' | 'high')[] = ['low', 'medium', 'high'];
+const PRIO_CYCLE: ('low' | 'medium' | 'high')[] = ['low', 'medium', 'high'];
+
+function PriorityBadge({ value, onChange }: { value?: string; onChange: (next: 'low' | 'medium' | 'high') => void }) {
+  const handleClick = () => {
+    const currentIdx = value ? PRIO_CYCLE.indexOf(value as any) : -1;
+    const nextIdx = (currentIdx + 1) % PRIO_CYCLE.length;
+    onChange(PRIO_CYCLE[nextIdx]!);
+  };
+  const color = value ? (PRIO_COLORS[value] ?? 'var(--color-text-dim)') : 'var(--color-text-dim)';
+  return (
+    <button
+      onClick={handleClick}
+      title={value ? `Priority: ${value}` : 'Set priority'}
+      style={{
+        flexShrink: 0, width: 28, height: 28, borderRadius: 6,
+        border: 'none',
+        background: 'transparent',
+        color,
+        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {value === 'high' ? (
+        <LuArrowBigUpDash style={{ fontSize: 18 }} />
+      ) : value === 'medium' ? (
+        <LuChevronsUp style={{ fontSize: 18 }} />
+      ) : (
+        <LuChevronUp style={{ fontSize: 16 }} />
+      )}
+    </button>
+  );
+}
 
 function EnrichedTodoList() {
   const todos = useAtomValue($todos);
@@ -654,64 +680,49 @@ function EnrichedTodoList() {
 
   return (
     <div style={{ borderRadius: 8, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
-      {todos.map((t, i) => {
-        const cat = categories.get(t.id);
-        const prio = priorities.get(t.id);
+      {todos.map((todo, index) => {
+        const cat = categories.get(todo.id);
+        const prio = priorities.get(todo.id);
         return (
           <div
-            key={t.id}
+            key={todo.id}
             style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-              borderTop: i > 0 ? '1px solid var(--color-border)' : 'none',
+              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+              borderTop: index > 0 ? '1px solid var(--color-border)' : 'none',
             }}
           >
-            {/* Priority select */}
-            <select
-              value={prio ?? ''}
-              onChange={e => {
-                const val = e.target.value as 'low' | 'medium' | 'high';
-                if (val) emit(requestSetPriority, { id: t.id, priority: val });
-              }}
-              style={{
-                fontSize: 10, padding: '2px 2px', borderRadius: 4, width: 28,
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-bg-code)',
-                color: prio ? (PRIO_COLORS[prio] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
-                cursor: 'pointer', flexShrink: 0,
-              }}
-            >
-              <option value="">—</option>
-              {PRIORITIES.map(p => (
-                <option key={p} value={p}>{p === 'low' ? '🟢' : p === 'medium' ? '🟡' : '🔴'}</option>
-              ))}
-            </select>
+            {/* Priority */}
+            <PriorityBadge
+              value={prio}
+              onChange={val => emit(requestSetPriority, { id: todo.id, priority: val || 'low' })}
+            />
             {/* Toggle done */}
             <button
-              onClick={() => emit(requestToggle, t.id)}
+              onClick={() => emit(requestToggle, todo.id)}
               style={{
-                flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-                border: t.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
-                background: t.done ? 'var(--color-accent)' : 'transparent',
+                flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
+                border: todo.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
+                background: todo.done ? 'var(--color-accent)' : 'transparent',
                 color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 cursor: 'pointer', padding: 0,
               }}
             >
-              {t.done && <LuCheck style={{ fontSize: 10 }} />}
+              {todo.done && <LuCheck style={{ fontSize: 12 }} />}
             </button>
             {/* Text */}
             <span style={{
-              flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              textDecoration: t.done ? 'line-through' : 'none',
-              color: t.done ? 'var(--color-text-dim)' : 'var(--color-text)',
+              flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              textDecoration: todo.done ? 'line-through' : 'none',
+              color: todo.done ? 'var(--color-text-dim)' : 'var(--color-text)',
             }}>
-              {t.text}
+              {todo.text}
             </span>
             {/* Category select */}
             <select
               value={cat ?? ''}
-              onChange={e => emit(requestSetCategory, { id: t.id, category: e.target.value })}
+              onChange={event => emit(requestSetCategory, { id: todo.id, category: event.target.value })}
               style={{
-                fontSize: 10, padding: '2px 4px', borderRadius: 4,
+                fontSize: 11, padding: '4px 8px', borderRadius: 6,
                 border: '1px solid var(--color-border)',
                 background: 'var(--color-bg-code)',
                 color: cat ? (CAT_COLORS[cat] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
@@ -719,20 +730,19 @@ function EnrichedTodoList() {
               }}
             >
               <option value="">no tag</option>
-              {CATEGORIES.map(c => (
-                <option key={c} value={c}>{c}</option>
+              {CATEGORIES.map(categoryName => (
+                <option key={categoryName} value={categoryName}>{categoryName}</option>
               ))}
             </select>
             {/* Remove */}
             <button
-              onClick={() => emit(requestRemove, t.id)}
-              className="opacity-0 group-hover:opacity-100"
+              onClick={() => emit(requestRemove, todo.id)}
               style={{
-                flexShrink: 0, background: 'none', border: 'none', padding: 2,
+                flexShrink: 0, background: 'none', border: 'none', padding: 4,
                 color: 'var(--color-text-dim)', cursor: 'pointer',
               }}
             >
-              <LuX style={{ fontSize: 12 }} />
+              <LuX style={{ fontSize: 14 }} />
             </button>
           </div>
         );
@@ -744,18 +754,18 @@ function EnrichedTodoList() {
 function Step6Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
-    r.atoms.set($todos, [
+    const reactiveOps = reactive(store);
+    reactiveOps.atoms.set($todos, [
       { id: 1, text: 'Ship feature', done: false },
       { id: 2, text: 'Buy groceries', done: true },
       { id: 3, text: 'Morning run', done: false },
     ]);
-    r.atoms.set($categories, new Map([[1, 'work'], [2, 'errands'], [3, 'personal']]));
-    r.atoms.set($priorities, new Map<number, 'low' | 'medium' | 'high'>([[1, 'high'], [3, 'medium']]));
-    r.sets.add($systems, todoSystem);
-    r.sets.add($systems, metadataSystem);
+    reactiveOps.atoms.set($categories, new Map([[1, 'work'], [2, 'errands'], [3, 'personal']]));
+    reactiveOps.atoms.set($priorities, new Map<number, 'low' | 'medium' | 'high'>([[1, 'high'], [3, 'medium']]));
+    reactiveOps.sets.add($systems, todoSystem);
+    reactiveOps.sets.add($systems, metadataSystem);
     const dispose = ignite(store);
-    return () => { dispose(); r.dispose(); };
+    return () => { dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -768,7 +778,7 @@ function Step6Demo() {
   );
 }
 
-function EcsTodoItem({ entity }: { entity: Entity }) {
+function EcsTodoItem({ entity }: { entity: string }) {
   const todos = useAtomValue($todos);
   const cat = useComponentValue($ecsCategory, entity);
   const prio = useComponentValue($ecsPriority, entity);
@@ -776,49 +786,34 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
   const [setPrio] = useSetComponent($ecsPriority);
   const emit = useEmit();
 
-  const todo = todos.find(t => String(t.id) === entity.id);
+  const todo = todos.find(item => String(item.id) === entity);
   if (!todo) return null;
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
     }}>
       {/* Priority */}
-      <select
-        value={prio ?? ''}
-        onChange={e => {
-          const val = e.target.value as 'low' | 'medium' | 'high';
-          if (val) setPrio(entity, val);
-        }}
-        style={{
-          fontSize: 10, padding: '2px 2px', borderRadius: 4, width: 28,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-bg-code)',
-          color: prio ? (PRIO_COLORS[prio] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
-          cursor: 'pointer', flexShrink: 0,
-        }}
-      >
-        <option value="">—</option>
-        {PRIORITIES.map(p => (
-          <option key={p} value={p}>{p === 'low' ? '🟢' : p === 'medium' ? '🟡' : '🔴'}</option>
-        ))}
-      </select>
+      <PriorityBadge
+        value={prio ?? undefined}
+        onChange={val => setPrio(entity, val || 'low')}
+      />
       {/* Toggle */}
       <button
         onClick={() => emit(requestToggle, todo.id)}
         style={{
-          flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+          flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
           border: todo.done ? '2px solid var(--color-accent)' : '2px solid var(--color-border-bright)',
           background: todo.done ? 'var(--color-accent)' : 'transparent',
           color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', padding: 0,
         }}
       >
-        {todo.done && <LuCheck style={{ fontSize: 10 }} />}
+        {todo.done && <LuCheck style={{ fontSize: 12 }} />}
       </button>
       {/* Text */}
       <span style={{
-        flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         textDecoration: todo.done ? 'line-through' : 'none',
         color: todo.done ? 'var(--color-text-dim)' : 'var(--color-text)',
       }}>
@@ -827,9 +822,9 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
       {/* Category */}
       <select
         value={cat ?? ''}
-        onChange={e => setCat(entity, e.target.value)}
+        onChange={event => setCat(entity, event.target.value)}
         style={{
-          fontSize: 10, padding: '2px 4px', borderRadius: 4,
+          fontSize: 11, padding: '4px 8px', borderRadius: 6,
           border: '1px solid var(--color-border)',
           background: 'var(--color-bg-code)',
           color: cat ? (CAT_COLORS[cat] ?? 'var(--color-text-muted)') : 'var(--color-text-dim)',
@@ -837,8 +832,8 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
         }}
       >
         <option value="">no tag</option>
-        {CATEGORIES.map(c => (
-          <option key={c} value={c}>{c}</option>
+        {CATEGORIES.map(categoryName => (
+          <option key={categoryName} value={categoryName}>{categoryName}</option>
         ))}
       </select>
       {/* Remove */}
@@ -848,11 +843,11 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
           emit(requestRemoveEcsEntity, String(todo.id));
         }}
         style={{
-          flexShrink: 0, background: 'none', border: 'none', padding: 2,
+          flexShrink: 0, background: 'none', border: 'none', padding: 4,
           color: 'var(--color-text-dim)', cursor: 'pointer',
         }}
       >
-        <LuX style={{ fontSize: 12 }} />
+        <LuX style={{ fontSize: 14 }} />
       </button>
     </div>
   );
@@ -873,9 +868,9 @@ function EcsEnrichedTodoList() {
 
   return (
     <div style={{ borderRadius: 8, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
-      {entityArray.map((e, i) => (
-        <div key={e.id} style={{ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>
-          <EcsTodoItem entity={e} />
+      {entityArray.map((entityId, index) => (
+        <div key={entityId} style={{ borderTop: index > 0 ? '1px solid var(--color-border)' : 'none' }}>
+          <EcsTodoItem entity={entityId} />
         </div>
       ))}
     </div>
@@ -885,23 +880,23 @@ function EcsEnrichedTodoList() {
 function Step7Demo() {
   const store = useMemo(() => createStore(), []);
   useEffect(() => {
-    const r = reactive(store);
+    const reactiveOps = reactive(store);
     // Set up todos
-    r.atoms.set($todos, [
+    reactiveOps.atoms.set($todos, [
       { id: 1, text: 'Ship feature', done: false },
       { id: 2, text: 'Buy groceries', done: true },
       { id: 3, text: 'Morning run', done: false },
     ]);
     // Register systems
-    r.sets.add($systems, todoSystem);
-    r.sets.add($systems, ecsSystem);
+    reactiveOps.sets.add($systems, todoSystem);
+    reactiveOps.sets.add($systems, ecsSystem);
     const dispose = ignite(store);
-    // Populate entities & components via world
-    const w = world($todoEntities)(store);
-    const e1 = w.entity('1'); w.add(e1); w.set(e1, $ecsCategory, 'work'); w.set(e1, $ecsPriority, 'high');
-    const e2 = w.entity('2'); w.add(e2); w.set(e2, $ecsCategory, 'errands');
-    const e3 = w.entity('3'); w.add(e3); w.set(e3, $ecsCategory, 'personal'); w.set(e3, $ecsPriority, 'medium');
-    return () => { w.dispose(); dispose(); r.dispose(); };
+    // Populate entities & components via query
+    const world = query($todoEntities)(store);
+    world.add('1'); world.set('1', $ecsCategory, 'work'); world.set('1', $ecsPriority, 'high');
+    world.add('2'); world.set('2', $ecsCategory, 'errands');
+    world.add('3'); world.set('3', $ecsCategory, 'personal'); world.set('3', $ecsPriority, 'medium');
+    return () => { world.dispose(); dispose(); reactiveOps.dispose(); };
   }, [store]);
 
   return (
@@ -920,16 +915,16 @@ function StepRow({ children, demo, label }: { children: React.ReactNode; demo: R
       <div style={{ flex: 1, minWidth: 0 }}>
         {children}
       </div>
-      <div style={{ width: 300, flexShrink: 0, position: 'sticky', top: 32 }}>
+      <div style={{ width: 360, flexShrink: 0, position: 'sticky', top: 32 }}>
         <div style={{ borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-bg-card)', overflow: 'hidden' }}>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px',
+            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px',
             borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-code)',
           }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-green)' }} />
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{label}</span>
           </div>
-          <div style={{ padding: 12 }}>
+          <div style={{ padding: 16 }}>
             {demo}
           </div>
         </div>
@@ -994,12 +989,12 @@ const todoSystem = system((scope) => {
   // Derived state: auto-recomputes when deps change
   compute([$todos, $filter], $filtered, (todos, filter) => {
     if (filter === 'all') return todos;
-    if (filter === 'active') return todos.filter(t => !t.done);
-    return todos.filter(t => t.done);
+    if (filter === 'active') return todos.filter(todo => !todo.done);
+    return todos.filter(todo => todo.done);
   });
 
   compute([$todos], $remaining, (todos) =>
-    todos.filter(t => !t.done).length
+    todos.filter(todo => !todo.done).length
   );
 
   // Signal handlers
@@ -1016,17 +1011,17 @@ const todoSystem = system((scope) => {
   });
 
   on(requestToggle, (id) => {
-    atoms.set($todos, atoms.get($todos)!.map(t =>
-      t.id === id ? { ...t, done: !t.done } : t
+    atoms.set($todos, atoms.get($todos)!.map(todo =>
+      todo.id === id ? { ...todo, done: !todo.done } : todo
     ));
   });
 
   on(requestRemove, (id) => {
-    atoms.set($todos, atoms.get($todos)!.filter(t => t.id !== id));
+    atoms.set($todos, atoms.get($todos)!.filter(todo => todo.id !== id));
   });
 
   on(requestClear, () => {
-    atoms.set($todos, atoms.get($todos)!.filter(t => !t.done));
+    atoms.set($todos, atoms.get($todos)!.filter(todo => !todo.done));
   });
 });`;
 
@@ -1054,20 +1049,20 @@ function TodoUI() {
   return (
     <div>
       <input value={input}
-        onChange={e => setInput(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && emit(requestAdd)} />
+        onChange={event => setInput(event.target.value)}
+        onKeyDown={event => event.key === 'Enter' && emit(requestAdd)} />
       <button onClick={() => emit(requestAdd)}>Add</button>
 
-      {(['all', 'active', 'completed'] as const).map(f => (
-        <button key={f} onClick={() => setFilter(f)}>{f}</button>
+      {(['all', 'active', 'completed'] as const).map(filterOption => (
+        <button key={filterOption} onClick={() => setFilter(filterOption)}>{filterOption}</button>
       ))}
 
-      {filtered.map(t => (
-        <li key={t.id}>
-          <input type="checkbox" checked={t.done}
-            onChange={() => emit(requestToggle, t.id)} />
-          <span>{t.text}</span>
-          <button onClick={() => emit(requestRemove, t.id)}>×</button>
+      {filtered.map(todo => (
+        <li key={todo.id}>
+          <input type="checkbox" checked={todo.done}
+            onChange={() => emit(requestToggle, todo.id)} />
+          <span>{todo.text}</span>
+          <button onClick={() => emit(requestRemove, todo.id)}>×</button>
         </li>
       ))}
 
@@ -1114,8 +1109,8 @@ const historySystem = system((scope) => {
     atoms.set($redoStack, []);
   });
 
-  compute([$undoStack], $canUndo, (s) => s.length > 1);
-  compute([$redoStack], $canRedo, (s) => s.length > 0);
+  compute([$undoStack], $canUndo, (stack) => stack.length > 1);
+  compute([$redoStack], $canRedo, (stack) => stack.length > 0);
 
   on(requestUndo, () => {
     const undo = atoms.get($undoStack) ?? [];
@@ -1251,15 +1246,15 @@ const metadataSystem = system((scope) => {
   const { effect } = scope(effects);
 
   on(requestSetCategory, ({ id, category }) => {
-    const m = new Map(atoms.get($categories));
-    category ? m.set(id, category) : m.delete(id);
-    atoms.set($categories, m);
+    const updated = new Map(atoms.get($categories));
+    category ? updated.set(id, category) : updated.delete(id);
+    atoms.set($categories, updated);
   });
 
   on(requestSetPriority, ({ id, priority }) => {
-    const m = new Map(atoms.get($priorities));
-    m.set(id, priority);
-    atoms.set($priorities, m);
+    const updated = new Map(atoms.get($priorities));
+    updated.set(id, priority);
+    atoms.set($priorities, updated);
   });
 
   // Auto-cleanup: when a todo is deleted, its metadata follows.
@@ -1267,15 +1262,15 @@ const metadataSystem = system((scope) => {
   // and removes orphaned entries from the component Maps.
   effect([$todos], () => {
     const ids = new Set(
-      (atoms.get($todos) ?? []).map(t => t.id)
+      (atoms.get($todos) ?? []).map(todo => todo.id)
     );
     const cats = new Map(atoms.get($categories)!);
     const pris = new Map(atoms.get($priorities)!);
     let dirty = false;
-    for (const k of cats.keys())
-      if (!ids.has(k)) { cats.delete(k); dirty = true; }
-    for (const k of pris.keys())
-      if (!ids.has(k)) { pris.delete(k); dirty = true; }
+    for (const entityId of cats.keys())
+      if (!ids.has(entityId)) { cats.delete(entityId); dirty = true; }
+    for (const entityId of pris.keys())
+      if (!ids.has(entityId)) { pris.delete(entityId); dirty = true; }
     if (dirty) {
       atoms.set($categories, cats);
       atoms.set($priorities, pris);
@@ -1302,9 +1297,9 @@ function EnrichedTodoItem({ todo }: { todo: Todo }) {
       {/* Priority selector */}
       <select
         value={priority ?? ''}
-        onChange={e => emit(requestSetPriority, {
+        onChange={event => emit(requestSetPriority, {
           id: todo.id,
-          priority: e.target.value as 'low' | 'medium' | 'high',
+          priority: event.target.value as 'low' | 'medium' | 'high',
         })}
       >
         <option value="">—</option>
@@ -1316,8 +1311,8 @@ function EnrichedTodoItem({ todo }: { todo: Todo }) {
       {/* Category selector */}
       <select
         value={category ?? ''}
-        onChange={e => emit(requestSetCategory, {
-          id: todo.id, category: e.target.value,
+        onChange={event => emit(requestSetCategory, {
+          id: todo.id, category: event.target.value,
         })}
       >
         <option value="">no tag</option>
@@ -1334,18 +1329,17 @@ function EnrichedTodoItem({ todo }: { todo: Todo }) {
 // No errors, no crashes — the UI gracefully degrades.`;
 
 const STEP7_CODE = `import {
-  entities, component, world, // ← ECS primitives
+  entities, component, query, // ← ECS primitives
   signal, system, listen,
 } from 'kho';
 
 // ── Entity registry ──
-// A Set<Entity> atom — tracks which entities exist.
+// A Set<string> atom — tracks which entities exist.
 const $todoEntities = entities();
 
 // ── Components (one-liner each!) ──
-// Each component() creates a WeakMap<Entity, T> atom.
-// When an entity is removed and its ref is GC'd,
-// all WeakMap entries for it are freed automatically.
+// Each component() creates a standalone component store.
+// When an entity is removed, its component data is cleaned up.
 const $category = component<string>();
 const $priority = component<'low' | 'medium' | 'high'>();
 // const $dueDate  = component<Date>();      ← just add more
@@ -1358,26 +1352,24 @@ const requestSetPriority = signal<{
 const requestRemoveEntity = signal<string>();
 
 // ── ECS System ──
-// scope(world($todoEntities)) gives you a World accessor
+// scope(query($todoEntities)) gives you a World accessor
 // bound to this system's lifecycle. Auto-disposes on shutdown.
 const ecsSystem = system((scope) => {
-  const w  = scope(world($todoEntities));
+  const world = scope(query($todoEntities));
   const { on } = scope(listen);
 
   on(requestSetCategory, ({ id, category }) => {
-    const e = w.entity(id);
-    if (category) w.set(e, $category, category);
-    else w.delete(e, $category);
+    if (category) world.set(id, $category, category);
+    else world.delete(id, $category);
   });
 
   on(requestSetPriority, ({ id, priority }) => {
-    w.set(w.entity(id), $priority, priority);
+    world.set(id, $priority, priority);
   });
 
   on(requestRemoveEntity, (id) => {
-    w.remove(w.entity(id));
+    world.remove(id);
     // That's it. No cleanup loops.
-    // WeakMap GC frees $category + $priority data.
   });
 });
 
@@ -1388,7 +1380,7 @@ const STEP7_UI = `import { useComponentValue, useSetComponent, useAtomValue } fr
 
 // Each item subscribes to its OWN entity's component values.
 // Only re-renders when THIS entity's data changes — not all entities.
-function EcsTodoItem({ entity }: { entity: Entity }) {
+function EcsTodoItem({ entity }: { entity: string }) {
   const cat  = useComponentValue($category, entity);
   const prio = useComponentValue($priority, entity);
   const [setCat]  = useSetComponent($category);
@@ -1397,7 +1389,7 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <select value={prio ?? ''}
-        onChange={e => setPrio(entity, e.target.value)}>
+        onChange={event => setPrio(entity, event.target.value)}>
         <option value="">—</option>
         <option value="low">low</option>
         <option value="medium">medium</option>
@@ -1405,7 +1397,7 @@ function EcsTodoItem({ entity }: { entity: Entity }) {
       </select>
       <span>{todo.text}</span>
       <select value={cat ?? ''}
-        onChange={e => setCat(entity, e.target.value)}>
+        onChange={event => setCat(entity, event.target.value)}>
         <option value="">no tag</option>
         <option value="work">work</option>
         <option value="personal">personal</option>
@@ -1421,8 +1413,8 @@ function EcsTodoList() {
   const todoEntities = useAtomValue($todoEntities);
   return (
     <div>
-      {Array.from(todoEntities).map(e => (
-        <EcsTodoItem key={e.id} entity={e} />
+      {Array.from(todoEntities).map(entityId => (
+        <EcsTodoItem key={entityId} entity={entityId} />
       ))}
     </div>
   );
@@ -1458,7 +1450,7 @@ const STEP4_FILES = [
 ];
 
 const STEP5_FILES = [
-  ...STEP4_FILES.filter(f => f.label !== 'persist.ts'),
+  ...STEP4_FILES.filter(file => file.label !== 'persist.ts'),
   { label: 'persistence-factory.ts', code: STEP5_CODE, lang: 'typescript' },
 ];
 
@@ -1496,7 +1488,7 @@ export function TodoApp() {
           <li><a href="#step-4">Persist to localStorage</a></li>
           <li><a href="#step-5">Generic persistence factory</a></li>
           <li><a href="#step-6">Extend without modifying — Component pattern</a></li>
-          <li><a href="#step-7">Full ECS — WeakMap &amp; auto GC</a></li>
+          <li><a href="#step-7">Full ECS — string entities &amp; auto cleanup</a></li>
         </ol>
       </nav>
 
@@ -1640,7 +1632,7 @@ export function TodoApp() {
       </StepRow>
 
       {/* ── Step 7 ── */}
-      <h2 id="step-7">Step 7 — Full ECS with WeakMap</h2>
+      <h2 id="step-7">Step 7 — Full ECS with String Entities</h2>
       <StepRow label="Step 7 · ECS" demo={<Step7Demo />}>
         <p>
           Step 6 used raw <code>Map&lt;number, T&gt;</code> atoms — each component needed its own
@@ -1648,11 +1640,11 @@ export function TodoApp() {
           replaces all of that with three primitives:
         </p>
         <ul>
-          <li><code>entities()</code> — a <code>Set&lt;Entity&gt;</code> registry atom</li>
-          <li><code>component&lt;T&gt;()</code> — a <code>WeakMap&lt;Entity, T&gt;</code> atom per property</li>
-          <li><code>world($entities)</code> — a <strong>scope factory</strong> that provides <code>entity()</code>,
+          <li><code>entities()</code> — a <code>Set&lt;string&gt;</code> registry atom</li>
+          <li><code>component&lt;T&gt;()</code> — a standalone component store per property</li>
+          <li><code>query($entities)</code> — a <strong>scope factory</strong> that provides
             <code>add()</code>, <code>remove()</code>, <code>get()</code>, <code>set()</code>,
-            <code>with()</code>, <code>without()</code>
+            <code>select()</code>, <code>without()</code>
           </li>
         </ul>
         <CodeTabs tabs={STEP7_FILES} defaultActive={5} />
@@ -1666,21 +1658,20 @@ export function TodoApp() {
           <li><code>scope(reactive)</code> → gives you <code>atoms.get/set</code></li>
           <li><code>scope(effects)</code> → gives you <code>effect()</code>, <code>compute()</code></li>
           <li><code>scope(listen)</code> → gives you <code>on()</code> for signals</li>
-          <li><code>scope(world($entities))</code> → gives you a <code>World</code> accessor</li>
+          <li><code>scope(query($entities))</code> → gives you a <code>World</code> accessor</li>
         </ul>
         <p>
           Every resource acquired via <code>scope()</code> is <strong>auto-disposed</strong> when the
           system is removed from <code>$systems</code>. No manual cleanup. Remove the system →
-          effects stop, signal handlers unsubscribe, world accessor is released.
+          effects stop, signal handlers unsubscribe, query accessor is released.
           This is why <code>scope()</code> exists: lifecycle-bound resource management.
         </p>
 
-        <h3>Why WeakMap?</h3>
+        <h3>Why string entities?</h3>
         <p>
-          Each <code>component&lt;T&gt;()</code> stores data in a <code>WeakMap&lt;Entity, T&gt;</code>.
-          When you call <code>w.remove(entity)</code>, the entity ref leaves the registry.
-          Once no code holds a reference to that entity object, the JS garbage collector
-          frees all WeakMap entries automatically — across every component. Zero cleanup loops.
+          Entities are plain strings — no wrapper objects needed.
+          When you call <code>world.remove(id)</code>, the entity leaves the registry
+          and all its component data is cleaned up automatically. Zero cleanup loops.
         </p>
 
         <h3>Step 6 vs Step 7</h3>
@@ -1692,7 +1683,7 @@ export function TodoApp() {
             <tr>
               <td>Component storage</td>
               <td><code>atom&lt;Map&lt;number, T&gt;&gt;</code></td>
-              <td><code>component&lt;T&gt;()</code> → <code>WeakMap&lt;Entity, T&gt;</code></td>
+              <td><code>component&lt;T&gt;()</code> → standalone component</td>
             </tr>
             <tr>
               <td>Adding a component</td>
@@ -1702,17 +1693,17 @@ export function TodoApp() {
             <tr>
               <td>Entity operations</td>
               <td>Manual Map reads/writes</td>
-              <td><code>w.get(e, $x)</code>, <code>w.set(e, $x, v)</code></td>
+              <td><code>world.get(entity, $x)</code>, <code>world.set(entity, $x, val)</code></td>
             </tr>
             <tr>
               <td>Cleanup on delete</td>
               <td>Manual loop per Map</td>
-              <td><code>w.remove(e)</code> → WeakMap GC</td>
+              <td><code>world.remove(id)</code> → auto cleanup</td>
             </tr>
             <tr>
               <td>Query entities</td>
               <td>Filter arrays manually</td>
-              <td><code>w.with($position, $health)</code></td>
+              <td><code>world.select($position, $health)</code></td>
             </tr>
             <tr>
               <td>React subscription</td>
@@ -1722,9 +1713,9 @@ export function TodoApp() {
           </tbody>
         </table>
         <blockquote>
-          <strong>Pattern:</strong> <code>entities()</code> + <code>component()</code> + <code>world()</code> = kho's
-          built-in ECS. Entities are string IDs, components are <code>WeakMap</code> atoms,
-          systems use <code>scope(world(...))</code> for lifecycle-bound access.
+          <strong>Pattern:</strong> <code>entities()</code> + <code>component()</code> + <code>query()</code> = kho's
+          built-in ECS. Entities are plain strings, components are standalone stores,
+          systems use <code>scope(query(...))</code> for lifecycle-bound access.
           Adding a new property is always a one-liner — and cleanup is free.
         </blockquote>
       </StepRow>
@@ -1758,7 +1749,7 @@ export function TodoApp() {
           <tr>
             <td><code>ecsSystem</code></td>
             <td>Category, priority (built-in ECS)</td>
-            <td><code>scope(world(...))</code>, WeakMap components, auto-GC</td>
+            <td><code>scope(query(...))</code>, standalone components, auto-cleanup</td>
           </tr>
           <tr>
             <td><code>persistAtom</code></td>

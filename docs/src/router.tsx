@@ -26,11 +26,20 @@ export function Router({ children }: { children: ReactNode }) {
     const url = path ? `${base}?p=${encodeURIComponent(path)}` : base;
     window.history.pushState({}, '', hash ? `${url}#${hash}` : url);
     setPage(path || '');
-    window.scrollTo(0, 0);
+
     if (hash) {
-      requestAnimationFrame(() => {
-        document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' });
-      });
+      // Wait for new page to render before scrolling to anchor
+      const tryScroll = (attempts: number) => {
+        const el = document.getElementById(hash);
+        if (el) {
+          el.scrollIntoView({ behavior: 'instant' });
+        } else if (attempts > 0) {
+          requestAnimationFrame(() => tryScroll(attempts - 1));
+        }
+      };
+      requestAnimationFrame(() => tryScroll(10));
+    } else {
+      window.scrollTo(0, 0);
     }
   }, []);
 

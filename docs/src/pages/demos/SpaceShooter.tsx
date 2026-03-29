@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   atom, createStore, reactive, effects, signal, listen, system, ignite, $systems,
-  component, entities, world,
+  component, entities, query,
 } from 'kho';
 import { KhoProvider, useAtomValue, useStore } from 'kho/react';
 import { CodeTabs } from '../../components/CodeTabs';
@@ -23,12 +23,12 @@ const $objects = entities();
 // Global State
 // ============================================
 
-const W = 300, H = 400;
+const CANVAS_WIDTH = 300, CANVAS_HEIGHT = 400;
 
 const $score = atom(0);
 const $lives = atom(3);
 const $gameOver = atom(false);
-const $mousePos = atom<Vec2>({ x: W / 2, y: H - 50 });
+const $mousePos = atom<Vec2>({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 50 });
 const $canvasEl = atom<HTMLCanvasElement | null>(null);
 
 // For Step 1 inspector
@@ -50,54 +50,53 @@ function eid(prefix: string) { return `${prefix}_${++_eid}`; }
 // ============================================
 
 const playerSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval } = scope(effects);
   const { on } = scope(listen);
 
-  const player = ecs.entity('player');
-  ecs.set(player, $pos, { x: W / 2, y: H - 50 });
-  ecs.set(player, $radius, 12);
-  ecs.set(player, $kind, 'player');
-  ecs.add(player);
+  ecs.add('player');
+  ecs.set('player', $pos, { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 50 });
+  ecs.set('player', $radius, 12);
+  ecs.set('player', $kind, 'player');
 
-  let fireCd = 0;
+  let fireCooldown = 0;
 
   on(fireSignal, () => {
     if (atoms.get($gameOver)) return;
-    if (fireCd > 0) return;
-    fireCd = 8;
-    const pp = ecs.get(player, $pos)!;
-    const b = ecs.entity(eid('b'));
-    ecs.set(b, $pos, { x: pp.x, y: pp.y - 16 });
-    ecs.set(b, $vel, { x: 0, y: -9 });
-    ecs.set(b, $radius, 3);
-    ecs.set(b, $kind, 'bullet');
-    ecs.add(b);
+    if (fireCooldown > 0) return;
+    fireCooldown = 8;
+    const playerPos = ecs.get('player', $pos)!;
+    const bulletId = eid('b');
+    ecs.add(bulletId);
+    ecs.set(bulletId, $pos, { x: playerPos.x, y: playerPos.y - 16 });
+    ecs.set(bulletId, $vel, { x: 0, y: -9 });
+    ecs.set(bulletId, $radius, 3);
+    ecs.set(bulletId, $kind, 'bullet');
   });
 
   interval(16, () => {
     if (atoms.get($gameOver)) return;
-    if (fireCd > 0) fireCd--;
+    if (fireCooldown > 0) fireCooldown--;
 
     const mouse = atoms.get($mousePos);
     if (!mouse) return;
-    const p = ecs.get(player, $pos);
-    if (!p) return;
+    const playerPos = ecs.get('player', $pos);
+    if (!playerPos) return;
 
     // Smoothly follow mouse X, clamp within bounds
-    const dx = mouse.x - p.x;
-    const newX = Math.max(14, Math.min(W - 14, p.x + dx * 0.3));
-    ecs.set(player, $pos, { x: newX, y: p.y });
+    const dx = mouse.x - playerPos.x;
+    const newX = Math.max(14, Math.min(CANVAS_WIDTH - 14, playerPos.x + dx * 0.3));
+    ecs.set('player', $pos, { x: newX, y: playerPos.y });
   });
 
   on(restartSignal, () => {
-    ecs.set(player, $pos, { x: W / 2, y: H - 50 });
+    ecs.set('player', $pos, { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 50 });
     atoms.set($score, 0);
     atoms.set($lives, 3);
     atoms.set($gameOver, false);
-    for (const e of ecs.all()) {
-      if (ecs.get(e, $kind) !== 'player') ecs.remove(e);
+    for (const entity of ecs.all()) {
+      if (ecs.get(entity, $kind) !== 'player') ecs.remove(entity);
     }
   });
 });
@@ -107,7 +106,7 @@ const playerSystem = system((scope) => {
 // ============================================
 
 const spawnSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval } = scope(effects);
 
@@ -121,13 +120,13 @@ const spawnSystem = system((scope) => {
     if (timer < rate) return;
     timer = 0;
 
-    const a = ecs.entity(eid('a'));
-    const r = 8 + Math.random() * 18;
-    ecs.set(a, $pos, { x: r + Math.random() * (W - 2 * r), y: -r });
-    ecs.set(a, $vel, { x: (Math.random() - 0.5) * 2, y: 1.5 + Math.random() * 2.5 });
-    ecs.set(a, $radius, r);
-    ecs.set(a, $kind, 'asteroid');
-    ecs.add(a);
+    const asteroidId = eid('a');
+    const radius = 8 + Math.random() * 18;
+    ecs.add(asteroidId);
+    ecs.set(asteroidId, $pos, { x: radius + Math.random() * (CANVAS_WIDTH - 2 * radius), y: -radius });
+    ecs.set(asteroidId, $vel, { x: (Math.random() - 0.5) * 2, y: 1.5 + Math.random() * 2.5 });
+    ecs.set(asteroidId, $radius, radius);
+    ecs.set(asteroidId, $kind, 'asteroid');
   });
 });
 
@@ -136,23 +135,23 @@ const spawnSystem = system((scope) => {
 // ============================================
 
 const physicsSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval, batch } = scope(effects);
 
   interval(16, () => {
     if (atoms.get($gameOver)) return;
     batch(() => {
-      for (const e of ecs.with($pos, $vel)) {
-        const p = ecs.get(e, $pos)!;
-        const v = ecs.get(e, $vel)!;
-        ecs.set(e, $pos, { x: p.x + v.x, y: p.y + v.y });
+      for (const entity of ecs.select($pos, $vel)) {
+        const pos = ecs.get(entity, $pos)!;
+        const vel = ecs.get(entity, $vel)!;
+        ecs.set(entity, $pos, { x: pos.x + vel.x, y: pos.y + vel.y });
       }
-      for (const e of ecs.all()) {
-        const p = ecs.get(e, $pos);
-        const k = ecs.get(e, $kind);
-        if (!p || k === 'player') continue;
-        if (p.y < -60 || p.y > H + 60 || p.x < -60 || p.x > W + 60) ecs.remove(e);
+      for (const entity of ecs.all()) {
+        const pos = ecs.get(entity, $pos);
+        const kind = ecs.get(entity, $kind);
+        if (!pos || kind === 'player') continue;
+        if (pos.y < -60 || pos.y > CANVAS_HEIGHT + 60 || pos.x < -60 || pos.x > CANVAS_WIDTH + 60) ecs.remove(entity);
       }
     });
   });
@@ -163,7 +162,7 @@ const physicsSystem = system((scope) => {
 // ============================================
 
 const collisionSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval, batch } = scope(effects);
   const { emit } = scope(listen);
@@ -171,46 +170,45 @@ const collisionSystem = system((scope) => {
   interval(16, () => {
     if (atoms.get($gameOver)) return;
     batch(() => {
-      const bullets: ReturnType<typeof ecs.entity>[] = [];
-      const asteroids: ReturnType<typeof ecs.entity>[] = [];
-      for (const e of ecs.all()) {
-        const k = ecs.get(e, $kind);
-        if (k === 'bullet') bullets.push(e);
-        else if (k === 'asteroid') asteroids.push(e);
+      const bullets: string[] = [];
+      const asteroids: string[] = [];
+      for (const entity of ecs.all()) {
+        const kind = ecs.get(entity, $kind);
+        if (kind === 'bullet') bullets.push(entity);
+        else if (kind === 'asteroid') asteroids.push(entity);
       }
 
-      const dead = new Set<string>();
+      const destroyed = new Set<string>();
 
-      for (const b of bullets) {
-        if (dead.has(b.id)) continue;
-        const bp = ecs.get(b, $pos)!;
-        for (const a of asteroids) {
-          if (dead.has(a.id)) continue;
-          const ap = ecs.get(a, $pos)!;
-          const ar = ecs.get(a, $radius)!;
-          const dx = bp.x - ap.x, dy = bp.y - ap.y;
-          if (dx * dx + dy * dy < ar * ar) {
-            dead.add(b.id);
-            dead.add(a.id);
+      for (const bullet of bullets) {
+        if (destroyed.has(bullet)) continue;
+        const bulletPos = ecs.get(bullet, $pos)!;
+        for (const asteroid of asteroids) {
+          if (destroyed.has(asteroid)) continue;
+          const asteroidPos = ecs.get(asteroid, $pos)!;
+          const asteroidRadius = ecs.get(asteroid, $radius)!;
+          const dx = bulletPos.x - asteroidPos.x, dy = bulletPos.y - asteroidPos.y;
+          if (dx * dx + dy * dy < asteroidRadius * asteroidRadius) {
+            destroyed.add(bullet);
+            destroyed.add(asteroid);
             atoms.set($score, (atoms.get($score) ?? 0) + 10);
-            emit(explosionSignal, ap);
+            emit(explosionSignal, asteroidPos);
             break;
           }
         }
       }
 
-      const player = ecs.entity('player');
-      if (ecs.has(player)) {
-        const pp = ecs.get(player, $pos)!;
-        const pr = ecs.get(player, $radius) ?? 12;
-        for (const a of asteroids) {
-          if (dead.has(a.id)) continue;
-          const ap = ecs.get(a, $pos)!;
-          const ar = ecs.get(a, $radius)!;
-          const dx = pp.x - ap.x, dy = pp.y - ap.y;
-          if (dx * dx + dy * dy < (pr + ar) * (pr + ar)) {
-            dead.add(a.id);
-            emit(explosionSignal, ap);
+      if (ecs.has('player')) {
+        const playerPos = ecs.get('player', $pos)!;
+        const playerRadius = ecs.get('player', $radius) ?? 12;
+        for (const asteroid of asteroids) {
+          if (destroyed.has(asteroid)) continue;
+          const asteroidPos = ecs.get(asteroid, $pos)!;
+          const asteroidRadius = ecs.get(asteroid, $radius)!;
+          const dx = playerPos.x - asteroidPos.x, dy = playerPos.y - asteroidPos.y;
+          if (dx * dx + dy * dy < (playerRadius + asteroidRadius) * (playerRadius + asteroidRadius)) {
+            destroyed.add(asteroid);
+            emit(explosionSignal, asteroidPos);
             const lives = Math.max(0, (atoms.get($lives) ?? 3) - 1);
             atoms.set($lives, lives);
             if (lives <= 0) atoms.set($gameOver, true);
@@ -218,9 +216,8 @@ const collisionSystem = system((scope) => {
         }
       }
 
-      for (const id of dead) {
-        const e = ecs.entity(id);
-        if (ecs.has(e)) ecs.remove(e);
+      for (const id of destroyed) {
+        if (ecs.has(id)) ecs.remove(id);
       }
     });
   });
@@ -231,16 +228,16 @@ const collisionSystem = system((scope) => {
 // ============================================
 
 const renderSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval } = scope(effects);
   const { on } = scope(listen);
 
   const stars = Array.from({ length: 50 }, () => ({
-    x: Math.random() * W,
-    y: Math.random() * H,
-    s: 0.5 + Math.random() * 1.5,
-    sp: 0.2 + Math.random() * 0.5,
+    x: Math.random() * CANVAS_WIDTH,
+    y: Math.random() * CANVAS_HEIGHT,
+    size: 0.5 + Math.random() * 1.5,
+    speed: 0.2 + Math.random() * 0.5,
   }));
 
   const booms: { x: number; y: number; life: number }[] = [];
@@ -256,37 +253,37 @@ const renderSystem = system((scope) => {
     if (!ctx) return;
 
     ctx.fillStyle = '#08081a';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    for (const s of stars) {
-      s.y += s.sp;
-      if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
-      ctx.globalAlpha = 0.2 + s.s * 0.3;
+    for (const star of stars) {
+      star.y += star.speed;
+      if (star.y > CANVAS_HEIGHT) { star.y = 0; star.x = Math.random() * CANVAS_WIDTH; }
+      ctx.globalAlpha = 0.2 + star.size * 0.3;
       ctx.fillStyle = '#fff';
-      ctx.fillRect(s.x, s.y, s.s, s.s);
+      ctx.fillRect(star.x, star.y, star.size, star.size);
     }
     ctx.globalAlpha = 1;
 
-    for (const e of ecs.all()) {
-      const p = ecs.get(e, $pos);
-      const r = ecs.get(e, $radius);
-      const k = ecs.get(e, $kind);
-      if (!p || !r || !k) continue;
+    for (const entity of ecs.all()) {
+      const pos = ecs.get(entity, $pos);
+      const radius = ecs.get(entity, $radius);
+      const kind = ecs.get(entity, $kind);
+      if (!pos || !radius || !kind) continue;
 
-      switch (k) {
+      switch (kind) {
         case 'player':
           ctx.fillStyle = '#4af';
           ctx.beginPath();
-          ctx.moveTo(p.x, p.y - 14);
-          ctx.lineTo(p.x - 10, p.y + 8);
-          ctx.lineTo(p.x + 10, p.y + 8);
+          ctx.moveTo(pos.x, pos.y - 14);
+          ctx.lineTo(pos.x - 10, pos.y + 8);
+          ctx.lineTo(pos.x + 10, pos.y + 8);
           ctx.closePath();
           ctx.fill();
           ctx.fillStyle = '#f84';
           ctx.beginPath();
-          ctx.moveTo(p.x - 3, p.y + 8);
-          ctx.lineTo(p.x, p.y + 13 + Math.random() * 4);
-          ctx.lineTo(p.x + 3, p.y + 8);
+          ctx.moveTo(pos.x - 3, pos.y + 8);
+          ctx.lineTo(pos.x, pos.y + 13 + Math.random() * 4);
+          ctx.lineTo(pos.x + 3, pos.y + 8);
           ctx.closePath();
           ctx.fill();
           break;
@@ -294,7 +291,7 @@ const renderSystem = system((scope) => {
           ctx.fillStyle = '#ff4';
           ctx.shadowBlur = 6;
           ctx.shadowColor = '#ff4';
-          ctx.fillRect(p.x - 1.5, p.y - 5, 3, 10);
+          ctx.fillRect(pos.x - 1.5, pos.y - 5, 3, 10);
           ctx.shadowBlur = 0;
           break;
         case 'asteroid':
@@ -302,31 +299,31 @@ const renderSystem = system((scope) => {
           ctx.strokeStyle = '#888';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.fillStyle = '#444';
           ctx.beginPath();
-          ctx.arc(p.x - r * 0.3, p.y - r * 0.2, r * 0.25, 0, Math.PI * 2);
+          ctx.arc(pos.x - radius * 0.3, pos.y - radius * 0.2, radius * 0.25, 0, Math.PI * 2);
           ctx.fill();
           break;
       }
     }
 
     for (let i = booms.length - 1; i >= 0; i--) {
-      const b = booms[i]!;
-      const t = b.life / 12;
-      ctx.globalAlpha = t;
+      const boom = booms[i]!;
+      const progress = boom.life / 12;
+      ctx.globalAlpha = progress;
       ctx.fillStyle = '#fa4';
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 18 * (1 - t), 0, Math.PI * 2);
+      ctx.arc(boom.x, boom.y, 18 * (1 - progress), 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#ff8';
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 10 * (1 - t), 0, Math.PI * 2);
+      ctx.arc(boom.x, boom.y, 10 * (1 - progress), 0, Math.PI * 2);
       ctx.fill();
-      b.life--;
-      if (b.life <= 0) booms.splice(i, 1);
+      boom.life--;
+      if (boom.life <= 0) booms.splice(i, 1);
     }
     ctx.globalAlpha = 1;
 
@@ -338,22 +335,22 @@ const renderSystem = system((scope) => {
     ctx.fillText(`Score ${score}`, 8, 18);
     ctx.fillStyle = '#f44';
     ctx.textAlign = 'right';
-    ctx.fillText('\u2665'.repeat(lives), W - 8, 18);
+    ctx.fillText('\u2665'.repeat(lives), CANVAS_WIDTH - 8, 18);
     ctx.textAlign = 'left';
 
     if (atoms.get($gameOver)) {
       ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       ctx.textAlign = 'center';
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 24px monospace';
-      ctx.fillText('GAME OVER', W / 2, H / 2 - 20);
+      ctx.fillText('GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
       ctx.font = '14px monospace';
       ctx.fillStyle = '#4af';
-      ctx.fillText(`Score: ${score}`, W / 2, H / 2 + 8);
+      ctx.fillText(`Score: ${score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 8);
       ctx.font = '11px monospace';
       ctx.fillStyle = '#888';
-      ctx.fillText('Click to restart', W / 2, H / 2 + 32);
+      ctx.fillText('Click to restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 32);
       ctx.textAlign = 'left';
     }
   });
@@ -368,30 +365,30 @@ function GameCanvas({ showHud }: { showHud?: boolean }) {
   const store = useStore();
 
   useEffect(() => {
-    const r = reactive(store);
-    if (canvasRef.current) r.atoms.set($canvasEl, canvasRef.current);
-    return () => { r.atoms.set($canvasEl, null); r.dispose(); };
+    const reactiveOps = reactive(store);
+    if (canvasRef.current) reactiveOps.atoms.set($canvasEl, canvasRef.current);
+    return () => { reactiveOps.atoms.set($canvasEl, null); reactiveOps.dispose(); };
   }, [store]);
 
   useEffect(() => {
-    const r = reactive(store);
+    const reactiveOps = reactive(store);
     const { emit } = listen(store);
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const move = (e: MouseEvent) => {
+    const move = (event: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const scaleX = W / rect.width;
-      const scaleY = H / rect.height;
-      r.atoms.set($mousePos, {
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY,
+      const scaleX = CANVAS_WIDTH / rect.width;
+      const scaleY = CANVAS_HEIGHT / rect.height;
+      reactiveOps.atoms.set($mousePos, {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY,
       });
     };
 
-    const click = (e: MouseEvent) => {
-      e.preventDefault();
-      if (r.atoms.get($gameOver)) {
+    const click = (event: MouseEvent) => {
+      event.preventDefault();
+      if (reactiveOps.atoms.get($gameOver)) {
         emit(restartSignal);
       } else {
         emit(fireSignal);
@@ -403,7 +400,7 @@ function GameCanvas({ showHud }: { showHud?: boolean }) {
     return () => {
       canvas.removeEventListener('mousemove', move);
       canvas.removeEventListener('click', click);
-      r.dispose();
+      reactiveOps.dispose();
     };
   }, [store]);
 
@@ -411,8 +408,8 @@ function GameCanvas({ showHud }: { showHud?: boolean }) {
     <div>
       <canvas
         ref={canvasRef}
-        width={W}
-        height={H}
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
         className="rounded-lg"
         style={{ display: 'block', width: '100%', height: 'auto', cursor: 'crosshair' }}
       />
@@ -433,12 +430,12 @@ function GameCanvas({ showHud }: { showHud?: boolean }) {
 function Step1Demo() {
   const [store, setStore] = useState<ReturnType<typeof createStore> | null>(null);
   useEffect(() => {
-    const s = createStore();
-    const r = reactive(s);
-    r.sets.add($systems, renderSystem);
-    const dispose = ignite(s);
-    setStore(s);
-    return () => { dispose(); r.dispose(); };
+    const newStore = createStore();
+    const reactiveOps = reactive(newStore);
+    reactiveOps.sets.add($systems, renderSystem);
+    const dispose = ignite(newStore);
+    setStore(newStore);
+    return () => { dispose(); reactiveOps.dispose(); };
   }, []);
 
   if (!store) return null;
@@ -456,40 +453,37 @@ function Step1Demo() {
 function Step1bDemo() {
   const [store, setStore] = useState<ReturnType<typeof createStore> | null>(null);
   useEffect(() => {
-    const s = createStore();
-    const ecs = world($objects)(s);
-    const r = reactive(s);
+    const newStore = createStore();
+    const ecs = query($objects)(newStore);
+    const reactiveOps = reactive(newStore);
 
-    const player = ecs.entity('player');
-    ecs.set(player, $pos, { x: 150, y: 350 });
-    ecs.set(player, $radius, 12);
-    ecs.set(player, $kind, 'player');
-    ecs.add(player);
+    ecs.add('player');
+    ecs.set('player', $pos, { x: 150, y: 350 });
+    ecs.set('player', $radius, 12);
+    ecs.set('player', $kind, 'player');
 
-    const a1 = ecs.entity('asteroid_1');
-    ecs.set(a1, $pos, { x: 80, y: 60 });
-    ecs.set(a1, $vel, { x: 0.5, y: 2.0 });
-    ecs.set(a1, $radius, 15);
-    ecs.set(a1, $kind, 'asteroid');
-    ecs.add(a1);
+    ecs.add('asteroid_1');
+    ecs.set('asteroid_1', $pos, { x: 80, y: 60 });
+    ecs.set('asteroid_1', $vel, { x: 0.5, y: 2.0 });
+    ecs.set('asteroid_1', $radius, 15);
+    ecs.set('asteroid_1', $kind, 'asteroid');
 
-    const b1 = ecs.entity('bullet_1');
-    ecs.set(b1, $pos, { x: 150, y: 320 });
-    ecs.set(b1, $vel, { x: 0, y: -9 });
-    ecs.set(b1, $radius, 3);
-    ecs.set(b1, $kind, 'bullet');
-    ecs.add(b1);
+    ecs.add('bullet_1');
+    ecs.set('bullet_1', $pos, { x: 150, y: 320 });
+    ecs.set('bullet_1', $vel, { x: 0, y: -9 });
+    ecs.set('bullet_1', $radius, 3);
+    ecs.set('bullet_1', $kind, 'bullet');
 
-    r.atoms.set($entitySnapshot, [player, a1, b1].map(e => ({
-      id: e.id,
-      kind: ecs.get(e, $kind),
-      pos: ecs.get(e, $pos),
-      vel: ecs.get(e, $vel),
-      radius: ecs.get(e, $radius),
+    reactiveOps.atoms.set($entitySnapshot, ['player', 'asteroid_1', 'bullet_1'].map(id => ({
+      id,
+      kind: ecs.get(id, $kind),
+      pos: ecs.get(id, $pos),
+      vel: ecs.get(id, $vel),
+      radius: ecs.get(id, $radius),
     })));
 
-    setStore(s);
-    return () => { ecs.dispose(); r.dispose(); };
+    setStore(newStore);
+    return () => { ecs.dispose(); reactiveOps.dispose(); };
   }, []);
 
   if (!store) return null;
@@ -507,17 +501,17 @@ function EntityInspector() {
   return (
     <div className="flex flex-col gap-3 text-xs font-mono">
       <div className="text-[10px] uppercase tracking-wider text-text-dim font-semibold">Entity · Component Data</div>
-      {snapshot.map(e => (
-        <div key={e.id} className="rounded-md border border-border/50 overflow-hidden">
+      {snapshot.map(entry => (
+        <div key={entry.id} className="rounded-md border border-border/50 overflow-hidden">
           <div className="px-2 py-1 bg-bg-code flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full" style={{ background: kindColors[e.kind ?? ''] ?? '#666' }} />
-            <span className="text-text-muted font-semibold">{e.id}</span>
-            <span className="text-text-dim ml-auto">{e.kind}</span>
+            <span className="w-2 h-2 rounded-full" style={{ background: kindColors[entry.kind ?? ''] ?? '#666' }} />
+            <span className="text-text-muted font-semibold">{entry.id}</span>
+            <span className="text-text-dim ml-auto">{entry.kind}</span>
           </div>
           <div className="px-2 py-1.5 flex flex-col gap-0.5 text-[11px]">
-            {e.pos && <Row label="$pos" value={`{x: ${e.pos.x}, y: ${e.pos.y}}`} />}
-            {e.vel && <Row label="$vel" value={`{x: ${e.vel.x}, y: ${e.vel.y}}`} />}
-            {e.radius != null && <Row label="$radius" value={String(e.radius)} />}
+            {entry.pos && <Row label="$pos" value={`{x: ${entry.pos.x}, y: ${entry.pos.y}}`} />}
+            {entry.vel && <Row label="$vel" value={`{x: ${entry.vel.x}, y: ${entry.vel.y}}`} />}
+            {entry.radius != null && <Row label="$radius" value={String(entry.radius)} />}
           </div>
         </div>
       ))}
@@ -541,13 +535,13 @@ function Row({ label, value }: { label: string; value: string }) {
 function Step2Demo() {
   const [store, setStore] = useState<ReturnType<typeof createStore> | null>(null);
   useEffect(() => {
-    const s = createStore();
-    const r = reactive(s);
-    r.sets.add($systems, playerSystem);
-    r.sets.add($systems, renderSystem);
-    const dispose = ignite(s);
-    setStore(s);
-    return () => { dispose(); r.dispose(); };
+    const newStore = createStore();
+    const reactiveOps = reactive(newStore);
+    reactiveOps.sets.add($systems, playerSystem);
+    reactiveOps.sets.add($systems, renderSystem);
+    const dispose = ignite(newStore);
+    setStore(newStore);
+    return () => { dispose(); reactiveOps.dispose(); };
   }, []);
 
   if (!store) return null;
@@ -562,15 +556,15 @@ function Step2Demo() {
 function Step3Demo() {
   const [store, setStore] = useState<ReturnType<typeof createStore> | null>(null);
   useEffect(() => {
-    const s = createStore();
-    const r = reactive(s);
-    r.sets.add($systems, playerSystem);
-    r.sets.add($systems, spawnSystem);
-    r.sets.add($systems, physicsSystem);
-    r.sets.add($systems, renderSystem);
-    const dispose = ignite(s);
-    setStore(s);
-    return () => { dispose(); r.dispose(); };
+    const newStore = createStore();
+    const reactiveOps = reactive(newStore);
+    reactiveOps.sets.add($systems, playerSystem);
+    reactiveOps.sets.add($systems, spawnSystem);
+    reactiveOps.sets.add($systems, physicsSystem);
+    reactiveOps.sets.add($systems, renderSystem);
+    const dispose = ignite(newStore);
+    setStore(newStore);
+    return () => { dispose(); reactiveOps.dispose(); };
   }, []);
 
   if (!store) return null;
@@ -588,16 +582,16 @@ function Step3Demo() {
 function Step4Demo() {
   const [store, setStore] = useState<ReturnType<typeof createStore> | null>(null);
   useEffect(() => {
-    const s = createStore();
-    const r = reactive(s);
-    r.sets.add($systems, playerSystem);
-    r.sets.add($systems, spawnSystem);
-    r.sets.add($systems, physicsSystem);
-    r.sets.add($systems, collisionSystem);
-    r.sets.add($systems, renderSystem);
-    const dispose = ignite(s);
-    setStore(s);
-    return () => { dispose(); r.dispose(); };
+    const newStore = createStore();
+    const reactiveOps = reactive(newStore);
+    reactiveOps.sets.add($systems, playerSystem);
+    reactiveOps.sets.add($systems, spawnSystem);
+    reactiveOps.sets.add($systems, physicsSystem);
+    reactiveOps.sets.add($systems, collisionSystem);
+    reactiveOps.sets.add($systems, renderSystem);
+    const dispose = ignite(newStore);
+    setStore(newStore);
+    return () => { dispose(); reactiveOps.dispose(); };
   }, []);
 
   if (!store) return null;
@@ -635,13 +629,13 @@ function StepRow({ children, demo, label }: { children: React.ReactNode; demo: R
 // ============================================
 
 const ECS_CODE = `import {
-  component, entities, world, atom, signal,
+  component, entities, query, atom, signal,
   system, reactive, effects, listen,
 } from 'kho';
 
 interface Vec2 { x: number; y: number }
 
-// Components — typed data columns (Atom<WeakMap<Entity, T>>)
+// Components — typed data columns (Atom<Map<string, T>>)
 const $pos    = component<Vec2>();   // position
 const $vel    = component<Vec2>();   // velocity
 const $radius = component<number>(); // collision radius
@@ -662,50 +656,49 @@ const explosionSignal = signal<Vec2>();
 const fireSignal      = signal<void>();`;
 
 const PLAYER_CODE = `const playerSystem = system((scope) => {
-  const ecs       = scope(world($objects)); // scoped ECS
+  const ecs       = scope(query($objects)); // scoped ECS
   const { atoms } = scope(reactive);
   const { interval } = scope(effects);
   const { on, emit } = scope(listen);
 
   // Create player entity with components
-  const player = ecs.entity('player');
-  ecs.set(player, $pos, { x: 150, y: 350 });
-  ecs.set(player, $radius, 12);
-  ecs.set(player, $kind, 'player');
-  ecs.add(player);  // register in $objects
+  ecs.add('player');
+  ecs.set('player', $pos, { x: 150, y: 350 });
+  ecs.set('player', $radius, 12);
+  ecs.set('player', $kind, 'player');
 
-  let fireCd = 0;
+  let fireCooldown = 0;
 
   // Click → fire bullet
   on(fireSignal, () => {
-    if (atoms.get($gameOver) || fireCd > 0) return;
-    fireCd = 8;
-    const pp = ecs.get(player, $pos)!;
-    const b = ecs.entity(nextId('b'));
-    ecs.set(b, $pos, { x: pp.x, y: pp.y - 16 });
-    ecs.set(b, $vel, { x: 0, y: -9 });
-    ecs.set(b, $radius, 3);
-    ecs.set(b, $kind, 'bullet');
-    ecs.add(b);
+    if (atoms.get($gameOver) || fireCooldown > 0) return;
+    fireCooldown = 8;
+    const playerPos = ecs.get('player', $pos)!;
+    const bulletId = nextId('b');
+    ecs.add(bulletId);
+    ecs.set(bulletId, $pos, { x: playerPos.x, y: playerPos.y - 16 });
+    ecs.set(bulletId, $vel, { x: 0, y: -9 });
+    ecs.set(bulletId, $radius, 3);
+    ecs.set(bulletId, $kind, 'bullet');
   });
 
   interval(16, () => {
     if (atoms.get($gameOver)) return;
-    if (fireCd > 0) fireCd--;
+    if (fireCooldown > 0) fireCooldown--;
 
     // Ship smoothly follows mouse X position
     const mouse = atoms.get($mousePos);
-    const p = ecs.get(player, $pos)!;
-    const dx = mouse.x - p.x;
-    const newX = Math.max(14, Math.min(286, p.x + dx * 0.3));
-    ecs.set(player, $pos, { x: newX, y: p.y });
+    const playerPos = ecs.get('player', $pos)!;
+    const dx = mouse.x - playerPos.x;
+    const newX = Math.max(14, Math.min(286, playerPos.x + dx * 0.3));
+    ecs.set('player', $pos, { x: newX, y: playerPos.y });
   });
 
   on(restartSignal, () => { /* reset player + clear entities */ });
 });`;
 
 const SPAWN_CODE = `const spawnSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval } = scope(effects);
 
@@ -721,21 +714,21 @@ const SPAWN_CODE = `const spawnSystem = system((scope) => {
     if (timer < rate) return;
     timer = 0;
 
-    const a = ecs.entity(nextId('a'));
-    const r = 8 + Math.random() * 18;
-    ecs.set(a, $pos, { x: Math.random() * 300, y: -r });
-    ecs.set(a, $vel, {
+    const asteroidId = nextId('a');
+    const radius = 8 + Math.random() * 18;
+    ecs.add(asteroidId);
+    ecs.set(asteroidId, $pos, { x: Math.random() * 300, y: -radius });
+    ecs.set(asteroidId, $vel, {
       x: (Math.random() - 0.5) * 2,
       y: 1.5 + Math.random() * 2.5,
     });
-    ecs.set(a, $radius, r);
-    ecs.set(a, $kind, 'asteroid');
-    ecs.add(a);
+    ecs.set(asteroidId, $radius, radius);
+    ecs.set(asteroidId, $kind, 'asteroid');
   });
 });`;
 
 const PHYSICS_CODE = `const physicsSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms } = scope(reactive);
   const { interval, batch } = scope(effects);
 
@@ -743,24 +736,24 @@ const PHYSICS_CODE = `const physicsSystem = system((scope) => {
     if (atoms.get($gameOver)) return;
     batch(() => {
       // Query: all entities with BOTH $pos and $vel
-      for (const e of ecs.with($pos, $vel)) {
-        const p = ecs.get(e, $pos)!;
-        const v = ecs.get(e, $vel)!;
-        ecs.set(e, $pos, { x: p.x + v.x, y: p.y + v.y });
+      for (const entity of ecs.select($pos, $vel)) {
+        const pos = ecs.get(entity, $pos)!;
+        const vel = ecs.get(entity, $vel)!;
+        ecs.set(entity, $pos, { x: pos.x + vel.x, y: pos.y + vel.y });
       }
       // Remove off-screen entities
-      for (const e of ecs.all()) {
-        const p = ecs.get(e, $pos);
-        const k = ecs.get(e, $kind);
-        if (!p || k === 'player') continue;
-        if (p.y < -60 || p.y > 460) ecs.remove(e);
+      for (const entity of ecs.all()) {
+        const pos = ecs.get(entity, $pos);
+        const kind = ecs.get(entity, $kind);
+        if (!pos || kind === 'player') continue;
+        if (pos.y < -60 || pos.y > 460) ecs.remove(entity);
       }
     });
   });
 });`;
 
 const COLLISION_CODE = `const collisionSystem = system((scope) => {
-  const ecs = scope(world($objects));
+  const ecs = scope(query($objects));
   const { atoms }  = scope(reactive);
   const { interval, batch } = scope(effects);
   const { emit }   = scope(listen);  // can emit signals
@@ -769,40 +762,39 @@ const COLLISION_CODE = `const collisionSystem = system((scope) => {
     if (atoms.get($gameOver)) return;
     batch(() => {
       const bullets   = ecs.all().filter(
-        e => ecs.get(e, $kind) === 'bullet'
+        entity => ecs.get(entity, $kind) === 'bullet'
       );
       const asteroids = ecs.all().filter(
-        e => ecs.get(e, $kind) === 'asteroid'
+        entity => ecs.get(entity, $kind) === 'asteroid'
       );
 
       // Bullet → Asteroid
-      for (const b of bullets) {
-        const bp = ecs.get(b, $pos)!;
-        for (const a of asteroids) {
-          const ap = ecs.get(a, $pos)!;
-          const ar = ecs.get(a, $radius)!;
-          const dx = bp.x - ap.x, dy = bp.y - ap.y;
-          if (dx*dx + dy*dy < ar*ar) {
-            ecs.remove(b);
-            ecs.remove(a);
+      for (const bullet of bullets) {
+        const bulletPos = ecs.get(bullet, $pos)!;
+        for (const asteroid of asteroids) {
+          const asteroidPos = ecs.get(asteroid, $pos)!;
+          const asteroidRadius = ecs.get(asteroid, $radius)!;
+          const dx = bulletPos.x - asteroidPos.x, dy = bulletPos.y - asteroidPos.y;
+          if (dx*dx + dy*dy < asteroidRadius*asteroidRadius) {
+            ecs.remove(bullet);
+            ecs.remove(asteroid);
             atoms.set($score, (atoms.get($score) ?? 0) + 10);
-            emit(explosionSignal, ap);  // → renderSystem
+            emit(explosionSignal, asteroidPos);  // → renderSystem
             break;
           }
         }
       }
 
       // Asteroid → Player
-      const player = ecs.entity('player');
-      const pp = ecs.get(player, $pos)!;
-      const pr = ecs.get(player, $radius)!;
-      for (const a of asteroids) {
-        const ap = ecs.get(a, $pos)!;
-        const ar = ecs.get(a, $radius)!;
-        const dx = pp.x - ap.x, dy = pp.y - ap.y;
-        if (dx*dx + dy*dy < (pr+ar)*(pr+ar)) {
-          ecs.remove(a);
-          emit(explosionSignal, ap);
+      const playerPos = ecs.get('player', $pos)!;
+      const playerRadius = ecs.get('player', $radius)!;
+      for (const asteroid of asteroids) {
+        const asteroidPos = ecs.get(asteroid, $pos)!;
+        const asteroidRadius = ecs.get(asteroid, $radius)!;
+        const dx = playerPos.x - asteroidPos.x, dy = playerPos.y - asteroidPos.y;
+        if (dx*dx + dy*dy < (playerRadius+asteroidRadius)*(playerRadius+asteroidRadius)) {
+          ecs.remove(asteroid);
+          emit(explosionSignal, asteroidPos);
           const lives = (atoms.get($lives) ?? 3) - 1;
           atoms.set($lives, lives);
           if (lives <= 0) atoms.set($gameOver, true);
@@ -889,7 +881,7 @@ export function SpaceShooter() {
       <StepRow label="Step 1 · Starfield" demo={<Step1Demo />}>
         <p>
           In ECS, data and logic are completely separated.
-          A <strong>component</strong> is a typed data column — <code>Atom&lt;WeakMap&lt;Entity, T&gt;&gt;</code>.
+          A <strong>component</strong> is a typed data column — <code>Atom&lt;Map&lt;string, T&gt;&gt;</code>.
           An <strong>entity</strong> is just an ID; it gains behavior by having components attached.
         </p>
         <p>
@@ -913,14 +905,14 @@ export function SpaceShooter() {
       <StepRow label="Step 2 · Ship Only" demo={<Step2Demo />}>
         <p>
           The player system creates a ship entity, reads mouse position from the <code>$mousePos</code> atom,
-          and spawns bullet entities when <code>fireSignal</code> fires (on click). It uses <code>scope(world($objects))</code>
+          and spawns bullet entities when <code>fireSignal</code> fires (on click). It uses <code>scope(query($objects))</code>
           to get a scoped ECS handle that auto-disposes when the system stops.
         </p>
         <CodeTabs tabs={STEP2_FILES} defaultActive={1} />
         <p>
-          <code>ecs.entity(id)</code> creates or retrieves an entity by string ID.
-          <code>ecs.set()</code> attaches component data. <code>ecs.add()</code> registers it
-          in the entity set. The render system draws whatever entities exist.
+          <code>ecs.add(id)</code> registers an entity in the set.
+          <code>ecs.set()</code> attaches component data.
+          The render system draws whatever entities exist.
         </p>
       </StepRow>
 
@@ -933,7 +925,7 @@ export function SpaceShooter() {
           has both <code>$pos</code> and <code>$vel</code>.
         </p>
         <p>
-          The query <code>ecs.with($pos, $vel)</code> returns only matching entities — the player
+          The query <code>ecs.select($pos, $vel)</code> returns only matching entities — the player
           has no <code>$vel</code> (it moves via mouse input), so it's excluded automatically.
         </p>
         <CodeTabs tabs={STEP3_FILES} defaultActive={2} />

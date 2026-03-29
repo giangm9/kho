@@ -247,22 +247,134 @@ export function Home() {
         <h2 className="text-xl font-bold mb-3 text-text">Architecture</h2>
         <p className="text-text-muted text-[0.95rem] mb-5 leading-relaxed">
           Kho separates <strong>what the data is</strong> from <strong>what happens when it changes</strong>.
+          Data lives in atoms. Scopes provide structured access. Systems compose scopes into logic.
         </p>
-        <pre className="text-[0.78rem] leading-relaxed">{`┌─────────────────────────────────────────────────────────────┐
-│                           Kho                               │
-├──────────────────────────┬──────────────────────────────────┤
-│      Data Layer          │      System Layer                │
-├──────────────────────────┼──────────────────────────────────┤
-│  reactive(store)         │  effects(store)                  │
-│  ├─ atoms.get/set/notify │  ├─ effect()                     │
-│  ├─ sets.add/remove/has  │  ├─ compute()                    │
-│  └─ maps.set/get/delete  │  ├─ batch()                      │
-│                          │  ├─ debounce/throttle()           │
-│  signal / listen         │  └─ interval/timeout()            │
-│  entity / attribute      │                                  │
-│  (ECS primitives)        │  system() — auto dispose          │
-│                          │  ignite() — orchestration         │
-└──────────────────────────┴──────────────────────────────────┘`}</pre>
+
+        <div className="space-y-4 text-[0.82rem]">
+
+          {/* Layer 1: Data */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="px-4 py-2 bg-bg-code border-b border-border flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-accent" />
+              <span className="font-bold text-text">Data</span>
+              <span className="text-text-dim ml-1">— what exists in the store</span>
+            </div>
+            <div className="grid grid-cols-3 gap-px bg-border">
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-accent">atom{'<T>'}</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Single value container</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 font-mono">$count, $user, $config</div>
+              </div>
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-accent">atom{'<Set>'} / atom{'<Map>'}</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Collections &amp; registries</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 font-mono">entities(), component()</div>
+              </div>
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-accent">signal{'<T>'}</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Fire-and-forget events</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 font-mono">$damage, $restart</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Arrow */}
+          <div className="flex justify-center text-text-dim text-lg">↓ accessed through ↓</div>
+
+          {/* Layer 2: Scopes */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="px-4 py-2 bg-bg-code border-b border-border flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green" />
+              <span className="font-bold text-text">Scopes</span>
+              <span className="text-text-dim ml-1">— how you interact with data</span>
+            </div>
+            <div className="grid grid-cols-2 gap-px bg-border">
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-green font-semibold">reactive(store)</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Read &amp; write data</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 space-y-0.5 font-mono">
+                  <div>atoms — get, set, notify</div>
+                  <div>sets — add, remove, has, values</div>
+                  <div>maps — set, get, delete, entries</div>
+                </div>
+              </div>
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-green font-semibold">effects(store)</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">React to changes</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 space-y-0.5 font-mono">
+                  <div>effect, compute — watch atoms</div>
+                  <div>batch — group notifications</div>
+                  <div>debounce, throttle, interval</div>
+                </div>
+              </div>
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-green font-semibold">listen(store)</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Handle events</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 font-mono">on, emit</div>
+              </div>
+              <div className="bg-bg px-4 py-3">
+                <div className="font-mono text-green font-semibold">query($entities)</div>
+                <div className="text-text-dim text-[0.78rem] mt-1">Entity / component queries</div>
+                <div className="text-text-muted text-[0.75rem] mt-1.5 font-mono">add, remove, get, set, select</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Arrow */}
+          <div className="flex justify-center text-text-dim text-lg">↓ composed into ↓</div>
+
+          {/* Layer 3: Systems */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="px-4 py-2 bg-bg-code border-b border-border flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber" />
+              <span className="font-bold text-text">Systems</span>
+              <span className="text-text-dim ml-1">— encapsulated logic with auto cleanup</span>
+            </div>
+            <div className="bg-bg px-4 py-3">
+              <div className="flex gap-6">
+                <div>
+                  <div className="font-mono text-amber font-semibold">system(setup)</div>
+                  <div className="text-text-dim text-[0.78rem] mt-1">
+                    Use <code className="text-text-muted bg-bg-code px-1 rounded text-[0.75rem]">scope()</code> to access any scope.
+                    All subscriptions auto-dispose when system stops.
+                  </div>
+                </div>
+                <div>
+                  <div className="font-mono text-amber font-semibold">ignite(store)</div>
+                  <div className="text-text-dim text-[0.78rem] mt-1">
+                    Orchestrate multiple systems. Hot-swap at runtime.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 p-2.5 rounded bg-bg-code text-[0.78rem] font-mono text-text-muted">
+                <span className="text-text-dim">{'// '}</span>
+                <span className="text-amber">system</span>
+                {'((scope) => {'}
+                <br />
+                <span className="text-text-dim">{'  // '}</span>scope gives lifecycle-bound access
+                <br />
+                {'  const { atoms } = scope('}
+                <span className="text-green">reactive</span>
+                {');'}
+                <br />
+                {'  const { effect } = scope('}
+                <span className="text-green">effects</span>
+                {');'}
+                <br />
+                {'  const { on, emit } = scope('}
+                <span className="text-green">listen</span>
+                {');'}
+                <br />
+                {'  const { add, select } = scope('}
+                <span className="text-green">query</span>
+                {'($units));'}
+                <br />
+                {'});'}
+              </div>
+            </div>
+          </div>
+
+        </div>
       </section>
 
       {/* ── React Integration ── */}

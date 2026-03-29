@@ -3,7 +3,7 @@ import {
   atom,
   component,
   entities,
-  world,
+  query,
   system,
   effects,
   reactive,
@@ -53,34 +53,30 @@ const inputState = { up: false, down: false };
 const pongSystem = system((scope) => {
   const { atoms } = scope(reactive);
   const { interval, batch } = scope(effects);
-  const ecs = scope(world($gameEntities));
+  const ecs = scope(query($gameEntities));
 
   // Create entities
-  const ball = ecs.entity('ball');
-  const player = ecs.entity('player');
-  const ai = ecs.entity('ai');
-
-  ecs.add(ball);
-  ecs.add(player);
-  ecs.add(ai);
+  ecs.add('ball');
+  ecs.add('player');
+  ecs.add('ai');
 
   // Player paddle (left)
-  ecs.set(player, $position, { x: PADDLE_MARGIN, y: CANVAS_H / 2 - PADDLE_H / 2 });
-  ecs.set(player, $size, { w: PADDLE_W, h: PADDLE_H });
+  ecs.set('player', $position, { x: PADDLE_MARGIN, y: CANVAS_H / 2 - PADDLE_H / 2 });
+  ecs.set('player', $size, { w: PADDLE_W, h: PADDLE_H });
 
   // AI paddle (right)
-  ecs.set(ai, $position, { x: CANVAS_W - PADDLE_MARGIN - PADDLE_W, y: CANVAS_H / 2 - PADDLE_H / 2 });
-  ecs.set(ai, $size, { w: PADDLE_W, h: PADDLE_H });
+  ecs.set('ai', $position, { x: CANVAS_W - PADDLE_MARGIN - PADDLE_W, y: CANVAS_H / 2 - PADDLE_H / 2 });
+  ecs.set('ai', $size, { w: PADDLE_W, h: PADDLE_H });
 
   // Ball
-  ecs.set(ball, $position, { x: CANVAS_W / 2, y: CANVAS_H / 2 });
-  ecs.set(ball, $velocity, { vx: INITIAL_BALL_SPEED, vy: INITIAL_BALL_SPEED * 0.6 });
-  ecs.set(ball, $size, { w: BALL_SIZE, h: BALL_SIZE });
+  ecs.set('ball', $position, { x: CANVAS_W / 2, y: CANVAS_H / 2 });
+  ecs.set('ball', $velocity, { vx: INITIAL_BALL_SPEED, vy: INITIAL_BALL_SPEED * 0.6 });
+  ecs.set('ball', $size, { w: BALL_SIZE, h: BALL_SIZE });
 
   function resetBall(direction: number) {
     const angle = (Math.random() - 0.5) * Math.PI / 3;
-    ecs.set(ball, $position, { x: CANVAS_W / 2, y: CANVAS_H / 2 });
-    ecs.set(ball, $velocity, {
+    ecs.set('ball', $position, { x: CANVAS_W / 2, y: CANVAS_H / 2 });
+    ecs.set('ball', $velocity, {
       vx: INITIAL_BALL_SPEED * direction * Math.cos(angle),
       vy: INITIAL_BALL_SPEED * Math.sin(angle),
     });
@@ -90,87 +86,87 @@ const pongSystem = system((scope) => {
   interval(16, () => {
     if (!atoms.get($running)) return;
 
-    const ballPos = ecs.get(ball, $position)!;
-    const ballVel = ecs.get(ball, $velocity)!;
-    const ballSz = ecs.get(ball, $size)!;
-    const playerPos = ecs.get(player, $position)!;
-    const playerSz = ecs.get(player, $size)!;
-    const aiPos = ecs.get(ai, $position)!;
-    const aiSz = ecs.get(ai, $size)!;
+    const ballPos = ecs.get('ball', $position)!;
+    const ballVel = ecs.get('ball', $velocity)!;
+    const ballSz = ecs.get('ball', $size)!;
+    const playerPos = ecs.get('player', $position)!;
+    const playerSz = ecs.get('player', $size)!;
+    const aiPos = ecs.get('ai', $position)!;
+    const aiSz = ecs.get('ai', $size)!;
 
     // --- Player paddle movement ---
-    let py = playerPos.y;
-    if (inputState.up) py -= PADDLE_SPEED;
-    if (inputState.down) py += PADDLE_SPEED;
-    py = Math.max(0, Math.min(CANVAS_H - playerSz.h, py));
-    ecs.set(player, $position, { x: playerPos.x, y: py });
+    let playerY = playerPos.y;
+    if (inputState.up) playerY -= PADDLE_SPEED;
+    if (inputState.down) playerY += PADDLE_SPEED;
+    playerY = Math.max(0, Math.min(CANVAS_H - playerSz.h, playerY));
+    ecs.set('player', $position, { x: playerPos.x, y: playerY });
 
     // --- AI paddle movement ---
     const aiCenter = aiPos.y + aiSz.h / 2;
     const ballCenter = ballPos.y + ballSz.h / 2;
-    let ay = aiPos.y;
-    if (aiCenter < ballCenter - 10) ay += AI_SPEED;
-    else if (aiCenter > ballCenter + 10) ay -= AI_SPEED;
-    ay = Math.max(0, Math.min(CANVAS_H - aiSz.h, ay));
-    ecs.set(ai, $position, { x: aiPos.x, y: ay });
+    let aiY = aiPos.y;
+    if (aiCenter < ballCenter - 10) aiY += AI_SPEED;
+    else if (aiCenter > ballCenter + 10) aiY -= AI_SPEED;
+    aiY = Math.max(0, Math.min(CANVAS_H - aiSz.h, aiY));
+    ecs.set('ai', $position, { x: aiPos.x, y: aiY });
 
     // --- Ball movement ---
-    let bx = ballPos.x + ballVel.vx;
-    let by = ballPos.y + ballVel.vy;
-    let bvx = ballVel.vx;
-    let bvy = ballVel.vy;
+    let ballX = ballPos.x + ballVel.vx;
+    let ballY = ballPos.y + ballVel.vy;
+    let ballVelX = ballVel.vx;
+    let ballVelY = ballVel.vy;
 
     // Top/bottom wall bounce
-    if (by <= 0) {
-      by = 0;
-      bvy = Math.abs(bvy);
-    } else if (by + ballSz.h >= CANVAS_H) {
-      by = CANVAS_H - ballSz.h;
-      bvy = -Math.abs(bvy);
+    if (ballY <= 0) {
+      ballY = 0;
+      ballVelY = Math.abs(ballVelY);
+    } else if (ballY + ballSz.h >= CANVAS_H) {
+      ballY = CANVAS_H - ballSz.h;
+      ballVelY = -Math.abs(ballVelY);
     }
 
     // Player paddle collision
     if (
-      bx <= playerPos.x + playerSz.w &&
-      bx + ballSz.w >= playerPos.x &&
-      by + ballSz.h >= py &&
-      by <= py + playerSz.h &&
-      bvx < 0
+      ballX <= playerPos.x + playerSz.w &&
+      ballX + ballSz.w >= playerPos.x &&
+      ballY + ballSz.h >= playerY &&
+      ballY <= playerY + playerSz.h &&
+      ballVelX < 0
     ) {
-      bx = playerPos.x + playerSz.w;
-      const hitRatio = ((by + ballSz.h / 2) - (py + playerSz.h / 2)) / (playerSz.h / 2);
-      const speed = Math.sqrt(bvx * bvx + bvy * bvy) + SPEED_INCREMENT;
+      ballX = playerPos.x + playerSz.w;
+      const hitRatio = ((ballY + ballSz.h / 2) - (playerY + playerSz.h / 2)) / (playerSz.h / 2);
+      const speed = Math.sqrt(ballVelX * ballVelX + ballVelY * ballVelY) + SPEED_INCREMENT;
       const angle = hitRatio * (Math.PI / 4);
-      bvx = speed * Math.cos(angle);
-      bvy = speed * Math.sin(angle);
+      ballVelX = speed * Math.cos(angle);
+      ballVelY = speed * Math.sin(angle);
     }
 
     // AI paddle collision
     if (
-      bx + ballSz.w >= aiPos.x &&
-      bx <= aiPos.x + aiSz.w &&
-      by + ballSz.h >= ay &&
-      by <= ay + aiSz.h &&
-      bvx > 0
+      ballX + ballSz.w >= aiPos.x &&
+      ballX <= aiPos.x + aiSz.w &&
+      ballY + ballSz.h >= aiY &&
+      ballY <= aiY + aiSz.h &&
+      ballVelX > 0
     ) {
-      bx = aiPos.x - ballSz.w;
-      const hitRatio = ((by + ballSz.h / 2) - (ay + aiSz.h / 2)) / (aiSz.h / 2);
-      const speed = Math.sqrt(bvx * bvx + bvy * bvy) + SPEED_INCREMENT;
+      ballX = aiPos.x - ballSz.w;
+      const hitRatio = ((ballY + ballSz.h / 2) - (aiY + aiSz.h / 2)) / (aiSz.h / 2);
+      const speed = Math.sqrt(ballVelX * ballVelX + ballVelY * ballVelY) + SPEED_INCREMENT;
       const angle = hitRatio * (Math.PI / 4);
-      bvx = -(speed * Math.cos(angle));
-      bvy = speed * Math.sin(angle);
+      ballVelX = -(speed * Math.cos(angle));
+      ballVelY = speed * Math.sin(angle);
     }
 
-    ecs.set(ball, $position, { x: bx, y: by });
-    ecs.set(ball, $velocity, { vx: bvx, vy: bvy });
+    ecs.set('ball', $position, { x: ballX, y: ballY });
+    ecs.set('ball', $velocity, { vx: ballVelX, vy: ballVelY });
 
     // --- Scoring ---
-    if (bx + ballSz.w < 0) {
+    if (ballX + ballSz.w < 0) {
       batch(() => {
         atoms.set($aiScore, (atoms.get($aiScore) ?? 0) + 1);
       });
       resetBall(1);
-    } else if (bx > CANVAS_W) {
+    } else if (ballX > CANVAS_W) {
       batch(() => {
         atoms.set($playerScore, (atoms.get($playerScore) ?? 0) + 1);
       });
@@ -187,8 +183,8 @@ function renderFrame(
   ctx: CanvasRenderingContext2D,
   store: ReturnType<typeof createStore>,
 ) {
-  const r = reactive(store);
-  const ecs = world($gameEntities)(store);
+  const reactiveOps = reactive(store);
+  const ecs = query($gameEntities)(store);
 
   ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -204,31 +200,31 @@ function renderFrame(
   ctx.setLineDash([]);
 
   // Draw entities
-  for (const e of ecs.with($position, $size)) {
-    const pos = ecs.get(e, $position)!;
-    const sz = ecs.get(e, $size)!;
+  for (const entityId of ecs.select($position, $size)) {
+    const pos = ecs.get(entityId, $position)!;
+    const sz = ecs.get(entityId, $size)!;
 
-    if (e.id === 'ball') {
+    if (entityId === 'ball') {
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(pos.x + sz.w / 2, pos.y + sz.h / 2, sz.w / 2, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      ctx.fillStyle = e.id === 'player' ? '#4ade80' : '#f87171';
+      ctx.fillStyle = entityId === 'player' ? '#4ade80' : '#f87171';
       ctx.fillRect(pos.x, pos.y, sz.w, sz.h);
     }
   }
 
   // Score display on canvas
-  const pScore = r.atoms.get($playerScore) ?? 0;
-  const aScore = r.atoms.get($aiScore) ?? 0;
+  const playerScoreValue = reactiveOps.atoms.get($playerScore) ?? 0;
+  const aiScoreValue = reactiveOps.atoms.get($aiScore) ?? 0;
   ctx.fillStyle = '#555';
   ctx.font = 'bold 48px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(String(pScore), CANVAS_W / 4, 60);
-  ctx.fillText(String(aScore), (3 * CANVAS_W) / 4, 60);
+  ctx.fillText(String(playerScoreValue), CANVAS_W / 4, 60);
+  ctx.fillText(String(aiScoreValue), (3 * CANVAS_W) / 4, 60);
 
-  r.dispose();
+  reactiveOps.dispose();
   ecs.dispose();
 }
 
@@ -236,7 +232,7 @@ function renderFrame(
 // Source code for display
 // ============================================
 
-const SOURCE_CODE = `import { atom, component, entities, world, system, effects, reactive } from 'kho';
+const SOURCE_CODE = `import { atom, component, entities, query, system, effects, reactive } from 'kho';
 
 // ECS components
 const $position = component<{ x: number; y: number }>();
@@ -253,28 +249,24 @@ const $running      = atom(false);
 const pongSystem = system((scope) => {
   const { atoms } = scope(reactive);
   const { interval, batch } = scope(effects);
-  const ecs = scope(world($gameEntities));
+  const ecs = scope(query($gameEntities));
 
-  const ball   = ecs.entity('ball');
-  const player = ecs.entity('player');
-  const ai     = ecs.entity('ai');
+  ecs.add('ball'); ecs.add('player'); ecs.add('ai');
 
-  ecs.add(ball); ecs.add(player); ecs.add(ai);
-
-  ecs.set(ball,   $position, { x: 300, y: 200 });
-  ecs.set(ball,   $velocity, { vx: 4, vy: 2.4 });
-  ecs.set(ball,   $size,     { w: 10, h: 10 });
-  ecs.set(player, $position, { x: 20, y: 165 });
-  ecs.set(player, $size,     { w: 12, h: 70 });
+  ecs.set('ball',   $position, { x: 300, y: 200 });
+  ecs.set('ball',   $velocity, { vx: 4, vy: 2.4 });
+  ecs.set('ball',   $size,     { w: 10, h: 10 });
+  ecs.set('player', $position, { x: 20, y: 165 });
+  ecs.set('player', $size,     { w: 12, h: 70 });
 
   // 60fps game loop
   interval(16, () => {
     if (!atoms.get($running)) return;
 
-    for (const e of ecs.with($position, $velocity)) {
-      const pos = ecs.get(e, $position)!;
-      const vel = ecs.get(e, $velocity)!;
-      ecs.set(e, $position, {
+    for (const entityId of ecs.select($position, $velocity)) {
+      const pos = ecs.get(entityId, $position)!;
+      const vel = ecs.get(entityId, $velocity)!;
+      ecs.set(entityId, $position, {
         x: pos.x + vel.vx,
         y: pos.y + vel.vy,
       });
@@ -320,35 +312,35 @@ export function PongGame() {
 
     // Score sync: poll from atoms (lightweight)
     const scoreInterval = setInterval(() => {
-      const r = reactive(store);
-      const ps = r.atoms.get($playerScore) ?? 0;
-      const as_ = r.atoms.get($aiScore) ?? 0;
-      const rn = r.atoms.get($running) ?? false;
-      r.dispose();
+      const reactiveOps = reactive(store);
+      const currentPlayerScore = reactiveOps.atoms.get($playerScore) ?? 0;
+      const currentAiScore = reactiveOps.atoms.get($aiScore) ?? 0;
+      const currentRunning = reactiveOps.atoms.get($running) ?? false;
+      reactiveOps.dispose();
 
-      setPlayerScore(ps);
-      setAiScore(as_);
-      setRunning(rn);
+      setPlayerScore(currentPlayerScore);
+      setAiScore(currentAiScore);
+      setRunning(currentRunning);
 
       // Detect changes for flash
       const prev = prevScoresRef.current;
       const triggered: string[] = [];
-      if (ps !== prev.playerScore) {
+      if (currentPlayerScore !== prev.playerScore) {
         triggered.push('atom:playerScore');
         triggered.push('effect:scoring');
       }
-      if (as_ !== prev.aiScore) {
+      if (currentAiScore !== prev.aiScore) {
         triggered.push('atom:aiScore');
         triggered.push('effect:scoring');
       }
-      if (rn !== prev.running) {
+      if (currentRunning !== prev.running) {
         triggered.push('atom:running');
         triggered.push('effect:gameLoop');
       }
       if (triggered.length > 0) {
         setLastTriggered(triggered);
       }
-      prevScoresRef.current = { playerScore: ps, aiScore: as_, running: rn };
+      prevScoresRef.current = { playerScore: currentPlayerScore, aiScore: currentAiScore, running: currentRunning };
     }, 100);
 
     return () => {
@@ -360,21 +352,21 @@ export function PongGame() {
 
   // Keyboard input
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
         inputState.up = true;
-        e.preventDefault();
+        event.preventDefault();
       }
-      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+      if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
         inputState.down = true;
-        e.preventDefault();
+        event.preventDefault();
       }
     };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
         inputState.up = false;
       }
-      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+      if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
         inputState.down = false;
       }
     };
@@ -389,24 +381,24 @@ export function PongGame() {
   const toggleRunning = useCallback(() => {
     const store = storeRef.current;
     if (!store) return;
-    const r = reactive(store);
-    const current = r.atoms.get($running) ?? false;
-    r.atoms.set($running, !current);
+    const reactiveOps = reactive(store);
+    const current = reactiveOps.atoms.get($running) ?? false;
+    reactiveOps.atoms.set($running, !current);
     setRunning(!current);
-    r.dispose();
+    reactiveOps.dispose();
   }, []);
 
   const resetGame = useCallback(() => {
     const store = storeRef.current;
     if (!store) return;
-    const r = reactive(store);
-    r.atoms.set($playerScore, 0);
-    r.atoms.set($aiScore, 0);
-    r.atoms.set($running, false);
+    const reactiveOps = reactive(store);
+    reactiveOps.atoms.set($playerScore, 0);
+    reactiveOps.atoms.set($aiScore, 0);
+    reactiveOps.atoms.set($running, false);
     setPlayerScore(0);
     setAiScore(0);
     setRunning(false);
-    r.dispose();
+    reactiveOps.dispose();
   }, []);
 
   const inspectorData: InspectorData = useMemo(
